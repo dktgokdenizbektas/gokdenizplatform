@@ -83,7 +83,7 @@ const sb = (() => {
   // ─── DATABASE ────────────────────────────────────────────
   const from = (table) => {
     const base = `${SUPABASE_URL}/rest/v1/${table}`;
-    const h = () => authHeaders(_token);
+    const h = () => ({ "apikey": SUPABASE_KEY, "Authorization": `Bearer ${_token || SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=representation" });
 
     return {
       async select(cols = "*", filters = "") {
