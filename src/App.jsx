@@ -1761,6 +1761,27 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
   };
 
   const onboardComplete = async (child) => {
+    if(!newUser) return;
+    setLoading2(true);
+    try {
+      // Önce giriş yap
+      const d = await sb.auth.signIn(newUser.email, rPass);
+      if(!d.access_token) { setErr("Giriş yapılamadı."); return; }
+      // Öğrenciyi kaydet
+      await sb.from("students").insert({
+        parent_id:  d.user.id,
+        name:       child.name,
+        age:        parseInt(child.age)||0,
+        class:      child.class||"",
+        diagnosis:  child.diagnosis||"",
+        notes:      child.notes||"",
+      });
+      await onLogin(d.user, d.access_token);
+    } catch(e) {
+      console.error(e);
+      setErr("Hata oluştu.");
+    } finally { setLoading2(false); }
+  };
     if(!newUser?.authId) return;
     // Öğrenciyi kaydet
     await sb.from("students").insert({
