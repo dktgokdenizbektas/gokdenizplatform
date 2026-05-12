@@ -1726,7 +1726,7 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
         setErr(d.error_description || d.msg || "E-posta veya şifre hatalı.");
         return;
       }
-      await loginUser(d.user, d.access_token);
+      await onLogin(d.user, d.access_token);
     } catch(e) {
       console.error('login error:', e);
       setErr("Bağlantı hatası. Lütfen tekrar deneyin.");
