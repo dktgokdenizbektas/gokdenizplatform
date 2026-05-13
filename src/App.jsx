@@ -3270,7 +3270,7 @@ function HeceOyunu({ letter, onComplete, onBack }) {
         <div className="gsi"><div className="gsn">{idx+1}/{havuz.length}</div><div className="gsl">Kelime</div></div>
       </div>
       <div style={{textAlign:"center",marginBottom:28}}>
-        <div style={{width:130,height:130,margin:"0 auto 10px",borderRadius:14,overflow:"hidden",background:B.surf3,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{width:130,height:130,margin:"0 auto 10px",borderRadius:14,overflow:"hidden",borderRadius:10, background:B.surf3,display:"flex",alignItems:"center",justifyContent:"center"}}>
           {imgSrc
             ? <img src={imgSrc} alt="" style={{width:"100%",height:"100%",objectFit:"contain"}}/>
             : <span style={{fontSize:56}}>{cur.word[0]}</span>
@@ -3366,7 +3366,7 @@ function KategoriOyunu({ onComplete, onBack }) {
       <div style={{display:"flex",flexWrap:"wrap",gap:14,justifyContent:"center",marginBottom:16,padding:"8px 0"}}>
         {bekleyenler.map(k=>(
           <div key={k.id} onClick={()=>setSec(k)} style={{
-            width:80,height:80,borderRadius:12,background:B.surf3,
+            width:80,height:80,borderRadius:12,
             border:`2px solid ${secili?.id===k.id?B.gold:B.border}`,
             cursor:"pointer",transition:"all .18s",flexShrink:0,
             display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",
