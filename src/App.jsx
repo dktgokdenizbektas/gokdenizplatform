@@ -1781,17 +1781,7 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
       console.error(e);
       setErr("Hata oluştu.");
     } finally { setLoading2(false); }
-  };
-    if(!newUser?.authId) return;
-    // Öğrenciyi kaydet
-    await sb.from("students").insert({
-      parent_id:  newUser.authId,
-      name:       child.name,
-      age:        child.age,
-      class:      child.class,
-      diagnosis:  child.diagnosis,
-      notes:      child.notes,
-    });
+  
     // Oturum aç
     const d = await sb.auth.signIn(newUser.email, newUser.password || rPass);
     if(d.access_token) {
