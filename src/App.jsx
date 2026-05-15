@@ -185,8 +185,12 @@ function useSupabase() {
 
   // Öğrencileri yükle
   const loadStudents = async () => {
-    const data = await sb.from("students").select("*");
-    return Array.isArray(data) ? data : [];
+    try {
+      const data = await sb.from("students").select("*");
+      return Array.isArray(data) ? data : [];
+    } catch(e) {
+      return [];
+    }
   };
 
   // Profil yükle
@@ -2568,14 +2572,14 @@ function ParentApp({ user, assignments, setAssignments, pool, onLogout, submissi
   const [page,setPage]=useState("home");
   const [active,setActive]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
-  const child=user.child;
-  const myA=assignments.filter(a=>a.childId===child.id&&a.approved!==false);
+  const child=user.child ?? null;
+  const myA=child ? assignments.filter(a=>a.childId===child.id&&a.approved!==false) : [];
   const done=myA.filter(a=>a.status==="tamamlandı").length;
   const prog=myA.length?Math.round((done/myA.length)*100):0;
   const startGame=a=>{setActive(a);setPage("game");};
   const finishGame=score=>{setAssignments(p=>p.map(a=>a.id===active.id?{...a,status:"tamamlandı",score}:a));setPage("celebrate");};
-  const myReqs=onlineRequests.filter(r=>r.childId===child.id);
-  const TITLES={home:`Merhaba, ${child.name}`,tasks:"Ödevlerim",freeplay:"Serbest Oyna",progress:"İlerleme",game:"Oyun",celebrate:"Tebrikler",online:"Online Seans Talebi"};
+  const myReqs=child ? onlineRequests.filter(r=>r.childId===child.id) : [];
+  const TITLES={home:`Merhaba, ${child?.name||"Veli"}`,tasks:"Ödevlerim",freeplay:"Serbest Oyna",progress:"İlerleme",game:"Oyun",celebrate:"Tebrikler",online:"Online Seans Talebi"};
   return (
     <div className="app-layout">
       <Sidebar role="parent" page={page} setPage={p=>{setPage(p);setSbOpen(false);}} user={user} child={child} onLogout={onLogout} open={sbOpen} onClose={()=>setSbOpen(false)}/>
@@ -2617,10 +2621,10 @@ function PHome({ child, myA, prog, done, startGame, setPage }) {
     <>
       <div className="card-gold mb4" style={{padding:28}}>
         <div className="flex ic g4">
-          <div style={{width:58,height:58,borderRadius:"50%",background:`linear-gradient(135deg,${B.goldDk},${B.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:700,color:"#0B1929",flexShrink:0}}>{child.name[0]}</div>
+          <div style={{width:58,height:58,borderRadius:"50%",background:`linear-gradient(135deg,${B.goldDk},${B.gold})`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:700,color:"#0B1929",flexShrink:0}}>{child?.name?.[0] ?? "V"}</div>
           <div style={{flex:1}}>
-            <div className="serif mb1" style={{fontSize:22,fontWeight:700,color:B.gold}}>{child.name}</div>
-            <div className="txs muted mb3">{child.age} yaş · {child.diagnosis||"Takip ediliyor"}</div>
+            <div className="serif mb1" style={{fontSize:22,fontWeight:700,color:B.gold}}>{child?.name ?? "Çocuk Eklenmedi"}</div>
+            <div className="txs muted mb3">{child?.age ?? "—"} yaş · {child?.diagnosis||"Takip ediliyor"}</div>
             <div className="flex ic g3"><div style={{flex:1}}><div className="prog-wrap"><div className="prog-fill" style={{width:`${prog}%`}}/></div></div><span className="txs bold tg">{prog}%</span></div>
           </div>
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}><ProgRing value={prog} size={62}/><div style={{fontSize:9,color:B.text3,fontWeight:700,textTransform:"uppercase",letterSpacing:".4px"}}>Başarı</div></div>
@@ -3963,6 +3967,8 @@ export default function App() {
           ...a, childId: a.student_id, dueDate: a.due_date,
           customWords: a.custom_words,
         })));
+      } else {
+        fullUser.child = null;
       }
     }
 
