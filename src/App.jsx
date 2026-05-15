@@ -3932,7 +3932,17 @@ export default function App() {
 
   const loginUser = async (authUser, token) => {
     if(token) sb.auth.setSession({ access_token: token, user: authUser, expires_at: Date.now()/1000 + 3600 });
-    const profile = await loadProfile(authUser.id);
+    let profile = await loadProfile(authUser.id);
+    if(!profile) {
+      await sb.from("profiles").upsert({
+        id: authUser.id,
+        role: "parent",
+        name: authUser.user_metadata?.full_name || authUser.email?.split("@")[0] || "Veli",
+        email: authUser.email,
+        phone: "",
+      });
+      profile = await loadProfile(authUser.id);
+    }
     if(!profile) { setLoading(false); return; }
 
     const fullUser = {
