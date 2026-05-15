@@ -3253,7 +3253,7 @@ function HeceOyunu({ letter, onComplete, onBack }) {
         <div className="gsi"><div className="gsn">{idx+1}/{havuz.length}</div><div className="gsl">Kelime</div></div>
       </div>
       <div style={{textAlign:"center",marginBottom:28}}>
-        <div style={{width:130,height:130,margin:"0 auto 10px",borderRadius:14,overflow:"hidden",borderRadius:10, background:B.surf3,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{width:130,height:130,margin:"0 auto 10px",borderRadius:14,overflow:"hidden",background:B.surf3,display:"flex",alignItems:"center",justifyContent:"center"}}>
           {imgSrc
             ? <img src={imgSrc} alt="" style={{width:"100%",height:"100%",objectFit:"contain"}}/>
             : <span style={{fontSize:56}}>{cur.word[0]}</span>
@@ -3718,7 +3718,7 @@ function FarkBulOyunu({ onComplete, onBack }) {
     const {bg, border, scale} = cellStyle(i, row);
     return (
       <div onClick={onClick} style={{
-        width:80, height:80, borderRadius:10, background:B.surf3,
+        width:80, height:80, borderRadius:10,
         background:bg, border:`2px solid ${border}`,
         cursor: row==="b"&&!fb ? "pointer":"default",
         transition:"all .2s", transform:scale,
