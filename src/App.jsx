@@ -3931,7 +3931,8 @@ export default function App() {
   }, []);
 
   const loginUser = async (authUser, token) => {
-    if(token) sb.auth.setSession({ access_token: token, user: authUser, expires_at: Date.now()/1000 + 3600 });
+    console.log('[loginUser] token:', token ? token.slice(0, 20) + '...' : 'MISSING');
+    sb.auth.setSession({ access_token: token, user: authUser, expires_at: Date.now()/1000 + 3600 });
     let profile = await loadProfile(authUser.id);
     if(!profile) {
       await sb.from("profiles").upsert({
