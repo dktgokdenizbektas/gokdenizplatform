@@ -1781,13 +1781,6 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
       console.error(e);
       setErr("Hata oluştu.");
     } finally { setLoading2(false); }
-  
-    // Oturum aç
-    const d = await sb.auth.signIn(newUser.email, newUser.password || rPass);
-    if(d.access_token) {
-      sb.auth.setSession(d);
-      await onLogin(d.user, d.access_token);
-    }
   };
 
   if(mode==="onboard"&&newUser) return <Onboarding user={newUser} onComplete={onboardComplete}/>;
