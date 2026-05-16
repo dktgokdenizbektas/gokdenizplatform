@@ -3937,63 +3937,82 @@ export default function App() {
 
   const loginUser = async (authUser, token) => {
     console.log('[loginUser] token:', token ? token.slice(0, 20) + '...' : 'MISSING');
-    sb.auth.setSession({ access_token: token, user: authUser, expires_at: Date.now()/1000 + 3600 });
-    let profile = await loadProfile(authUser.id);
-    if(!profile) {
-      await sb.from("profiles").upsert({
+    try {
+      sb.auth.setSession({ access_token: token, user: authUser, expires_at: Date.now()/1000 + 3600 });
+      let profile = await loadProfile(authUser.id);
+      if(!profile) {
+        await sb.from("profiles").upsert({
+          id: authUser.id,
+          role: "parent",
+          name: authUser.user_metadata?.full_name || authUser.email?.split("@")[0] || "Veli",
+          email: authUser.email,
+          phone: "",
+        });
+        profile = await loadProfile(authUser.id);
+      }
+      if(!profile) { setLoading(false); return; }
+
+      const fullUser = {
+        ...profile,
         id: authUser.id,
-        role: "parent",
-        name: authUser.user_metadata?.full_name || authUser.email?.split("@")[0] || "Veli",
         email: authUser.email,
-        phone: "",
-      });
-      profile = await loadProfile(authUser.id);
-    }
-    if(!profile) { setLoading(false); return; }
+      };
 
-    const fullUser = {
-      ...profile,
-      id: authUser.id,
-      email: authUser.email,
-    };
-
-    // Veli ise öğrencisini yükle
-    if(profile.role === "parent") {
-      const students = await loadStudents();
-      const myStudent = students.find(s => s.parent_id === authUser.id);
-      if(myStudent) {
-        fullUser.child = myStudent;
-        const asgns = await loadAssignments([myStudent.id]);
-        setAssignments(asgns.map(a => ({
-          ...a, childId: a.student_id, dueDate: a.due_date,
-          customWords: a.custom_words,
-        })));
-      } else {
-        fullUser.child = null;
+      // Veli ise öğrencisini yükle
+      if(profile.role === "parent") {
+        try {
+          const students = await loadStudents();
+          const myStudent = students.find(s => s.parent_id === authUser.id);
+          if(myStudent) {
+            fullUser.child = myStudent;
+            const asgns = await loadAssignments([myStudent.id]);
+            setAssignments(asgns.map(a => ({
+              ...a, childId: a.student_id, dueDate: a.due_date,
+              customWords: a.custom_words,
+            })));
+          } else {
+            fullUser.child = null;
+          }
+        } catch(e) {
+          console.error('[loginUser] failed to load parent students:', e);
+          fullUser.child = null;
+        }
       }
-    }
 
-    // Uzman ise hepsini yükle
-    if(profile.role === "expert") {
-      const students = await loadStudents();
-      setStudents(students);
-      const ids = students.map(s => s.id);
-      if(ids.length) {
-        const asgns = await loadAssignments(ids);
-        setAssignments(asgns.map(a => ({
-          ...a, childId: a.student_id, dueDate: a.due_date,
-          customWords: a.custom_words,
-        })));
+      // Uzman ise hepsini yükle
+      if(profile.role === "expert") {
+        try {
+          const students = await loadStudents();
+          setStudents(students);
+          const ids = students.map(s => s.id);
+          if(ids.length) {
+            const asgns = await loadAssignments(ids);
+            setAssignments(asgns.map(a => ({
+              ...a, childId: a.student_id, dueDate: a.due_date,
+              customWords: a.custom_words,
+            })));
+          }
+        } catch(e) {
+          console.error('[loginUser] failed to load expert students:', e);
+        }
+        try {
+          const [reqs, avail, sess] = await Promise.all([
+            loadRequests(), loadAvailability(), loadSessions(),
+          ]);
+          setOnlineRequests(reqs);
+          setAvailability(avail);
+          setSessions(sess.map(s => ({ ...s, childId: s.student_id })));
+        } catch(e) {
+          console.error('[loginUser] failed to load expert sessions/requests:', e);
+        }
       }
-      const [reqs, avail, sess] = await Promise.all([
-        loadRequests(), loadAvailability(), loadSessions(),
-      ]);
-      setOnlineRequests(reqs);
-      setAvailability(avail);
-      setSessions(sess.map(s => ({ ...s, childId: s.student_id })));
-    }
 
-    setUser(fullUser);
+      setUser(fullUser);
+    } catch(e) {
+      console.error('[loginUser] unexpected error:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogout = async () => {
