@@ -2584,6 +2584,7 @@ function ParentApp({ user, assignments, setAssignments, pool, onLogout, submissi
   const [page,setPage]=useState("home");
   const [active,setActive]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
+  const { updateAssignment } = useSupabase();
   const child=user.child ?? null;
   if(!child) return (
     <>
@@ -2602,7 +2603,11 @@ function ParentApp({ user, assignments, setAssignments, pool, onLogout, submissi
   const done=myA.filter(a=>a.status==="tamamlandı").length;
   const prog=myA.length?Math.round((done/myA.length)*100):0;
   const startGame=a=>{setActive(a);setPage("game");};
-  const finishGame=score=>{setAssignments(p=>p.map(a=>a.id===active.id?{...a,status:"tamamlandı",score}:a));setPage("celebrate");};
+  const finishGame=async score=>{
+    await updateAssignment(active.id,{status:"tamamlandı",score});
+    setAssignments(p=>p.map(a=>a.id===active.id?{...a,status:"tamamlandı",score}:a));
+    setPage("celebrate");
+  };
   const myReqs=child ? onlineRequests.filter(r=>r.childId===child.id) : [];
   const TITLES={home:`Merhaba, ${child?.name||"Veli"}`,tasks:"Ödevlerim",freeplay:"Serbest Oyna",progress:"İlerleme",game:"Oyun",celebrate:"Tebrikler",online:"Online Seans Talebi"};
   return (
