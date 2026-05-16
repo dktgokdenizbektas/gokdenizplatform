@@ -1740,28 +1740,36 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
     if(!newUser) return;
     setLoading2(true);
     try {
+      console.log('[onboardComplete] starting signIn for', newUser.email);
       const d = await sb.auth.signIn(newUser.email, rPass);
+      console.log('[onboardComplete] signIn result:', { access_token: d.access_token ? d.access_token.slice(0,20)+'...' : null, userId: d.user?.id, error: d.error });
       if(!d.access_token) { setErr("Giriş yapılamadı."); return; }
-      // Profil kaydet (JWT ile)
-      await sb.from("profiles").upsert({
+
+      console.log('[onboardComplete] upserting profile for user', d.user.id);
+      const profileRes = await sb.from("profiles").upsert({
         id:    d.user.id,
         role:  "parent",
         name:  newUser.name,
         email: newUser.email,
         phone: newUser.phone || "",
       });
-      // Öğrenciyi kaydet
-      await sb.from("students").insert({
+      console.log('[onboardComplete] profile upsert result:', profileRes);
+
+      const studentPayload = {
         parent_id: d.user.id,
         name:      child.name,
         age:       parseInt(child.age)||0,
         class:     child.class||"",
         diagnosis: child.diagnosis||"",
         notes:     child.notes||"",
-      });
+      };
+      console.log('[onboardComplete] inserting student:', studentPayload);
+      const studentRes = await sb.from("students").insert(studentPayload);
+      console.log('[onboardComplete] student insert result:', studentRes);
+
       await onLogin(d.user, d.access_token);
     } catch(e) {
-      console.error(e);
+      console.error('[onboardComplete] caught error:', e);
       setErr("Hata oluştu.");
     } finally { setLoading2(false); }
   };
