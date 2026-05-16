@@ -212,6 +212,7 @@ function useSupabase() {
       approved:     asgn.approved || false,
       due_date:     asgn.dueDate,
       custom_words: asgn.customWords,
+      pool_item_id: asgn.poolItemId || null,
     };
     console.log('[saveAssignment] inserting payload:', payload);
     try {
@@ -2716,10 +2717,10 @@ function PTasks({ myA, startGame, pool, submissions, setSubmissions, child, assi
           <div style={{flex:1}}><div className="ar-title">{a.title}</div><div className="ar-meta">{gameLabel(a.game)} · {a.letter} Sesi · Son: {a.dueDate}</div></div>
           <div className="flex ic g2">
             <SBadge s={a.status}/>
-            {a.status!=="tamamlandı"&&<button className="btn btn-gold btn-sm" onClick={()=>startGame(a)}>Oyna</button>}
-            {a.status!=="tamamlandı"&&<button className="btn btn-ghost btn-sm" onClick={()=>setSubmitModal(a)} title="Fotoğraflı Teslim">{IC.img}</button>}
-            {a.game==="pdf"&&pool.find(p=>p.id===a.poolItemId)&&<a href={pool.find(p=>p.id===a.poolItemId).dataUrl} download className="btn btn-ghost btn-sm">{IC.dl}</a>}
-            {a.score&&<span className="badge bn">{a.score}</span>}
+            {a.game!=="pdf"&&<button className="btn btn-gold btn-sm" onClick={()=>startGame(a)}>{a.status==="tamamlandı"?"Tekrar Oyna":"Oyna"}</button>}
+            {a.game!=="pdf"&&<button className="btn btn-ghost btn-sm" onClick={()=>setSubmitModal(a)} title="Fotoğraflı Teslim">{IC.img}</button>}
+            {a.game==="pdf"&&(()=>{ const mat=pool.find(p=>p.id===a.poolItemId); return mat ? <a href={mat.dataUrl} download={mat.name||"odev.pdf"} className="btn btn-gold btn-sm">{IC.dl} PDF İndir</a> : <span className="txs muted">PDF yükleniyor...</span>; })()}
+            {a.score!=null&&<span className="badge bn">{a.score}</span>}
           </div>
         </div>
       ))}
@@ -4034,7 +4035,7 @@ export default function App() {
             console.log('[loginUser:parent] assignments result:', asgns);
             setAssignments(asgns.map(a => ({
               ...a, childId: a.student_id, dueDate: a.due_date,
-              customWords: a.custom_words,
+              customWords: a.custom_words, poolItemId: a.pool_item_id,
             })));
           } else {
             fullUser.child = null;
@@ -4063,7 +4064,7 @@ export default function App() {
             const asgns = await loadAssignments(ids);
             setAssignments(asgns.map(a => ({
               ...a, childId: a.student_id, dueDate: a.due_date,
-              customWords: a.custom_words,
+              customWords: a.custom_words, poolItemId: a.pool_item_id,
             })));
           }
         } catch(e) {
