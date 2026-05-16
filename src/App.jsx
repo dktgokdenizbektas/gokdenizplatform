@@ -202,21 +202,30 @@ function useSupabase() {
   // Ödev kaydet
   const saveAssignment = async (asgn) => {
     setLoading(true);
+    const payload = {
+      student_id:   asgn.childId,
+      title:        asgn.title,
+      game:         asgn.game,
+      letter:       asgn.letter,
+      difficulty:   asgn.difficulty,
+      status:       asgn.status || "onay bekliyor",
+      approved:     asgn.approved || false,
+      due_date:     asgn.dueDate,
+      custom_words: asgn.customWords,
+    };
+    console.log('[saveAssignment] inserting payload:', payload);
     try {
-      const result = await sb.from("assignments").insert({
-        student_id:   asgn.childId,
-        title:        asgn.title,
-        game:         asgn.game,
-        letter:       asgn.letter,
-        difficulty:   asgn.difficulty,
-        status:       asgn.status || "onay bekliyor",
-        approved:     asgn.approved || false,
-        due_date:     asgn.dueDate,
-        custom_words: asgn.customWords,
-      });
+      const result = await sb.from("assignments").insert(payload);
+      console.log('[saveAssignment] raw result:', result);
+      if(Array.isArray(result) && result[0]?.code) {
+        console.error('[saveAssignment] Supabase error:', result[0]);
+      }
       return Array.isArray(result) ? result[0] : null;
-    } catch(e) { setError(e); return null; }
-    finally { setLoading(false); }
+    } catch(e) {
+      console.error('[saveAssignment] caught exception:', e);
+      setError(e);
+      return null;
+    } finally { setLoading(false); }
   };
 
   // Ödev güncelle
@@ -1977,7 +1986,9 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
   const showNotif=msg=>{setNotif(msg);setTimeout(()=>setNotif(""),5000);};
 
   const handleSaveAssignment = async (a) => {
+    console.log('[handleSaveAssignment] called with:', a);
     const saved = await saveAssignment(a);
+    console.log('[handleSaveAssignment] saveAssignment returned:', saved);
     const finalId = saved?.id || a.id;
     setAssignments(p => [...p, { ...a, id: finalId }]);
     setModal(false);
