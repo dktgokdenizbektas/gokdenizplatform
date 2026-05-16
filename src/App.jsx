@@ -212,7 +212,7 @@ function useSupabase() {
       approved:     asgn.approved || false,
       due_date:     asgn.dueDate,
       custom_words: asgn.customWords,
-      pool_item_id: asgn.poolItemId || null,
+      ...(asgn.poolItemId ? { pool_item_id: asgn.poolItemId } : {}),
     };
     console.log('[saveAssignment] inserting payload:', payload);
     try {
@@ -288,7 +288,9 @@ function useSupabase() {
       type:        item.type || "pdf",
       file_url:    item.fileUrl || "",
       letter:      item.letter || "",
+      tags:        item.tags || "",
       notes:       item.notes || "",
+      size:        item.size || "",
       uploaded_at: item.uploadedAt || new Date().toLocaleDateString("tr-TR"),
     };
     console.log('[saveMaterial] saving:', payload);
