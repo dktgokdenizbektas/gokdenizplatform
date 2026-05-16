@@ -1968,12 +1968,21 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
   const [notif,setNotif]=useState("");
   const [prevAsgn,setPrevAsgn]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
+  const { saveAssignment } = useSupabase();
 
   const allC=students||[];
   const getA=cid=>assignments.filter(a=>a.childId===cid);
   const getProg=cid=>{const a=getA(cid);return a.length?Math.round((a.filter(x=>x.status==="tamamlandı").length/a.length)*100):0;};
 
   const showNotif=msg=>{setNotif(msg);setTimeout(()=>setNotif(""),5000);};
+
+  const handleSaveAssignment = async (a) => {
+    const saved = await saveAssignment(a);
+    const finalId = saved?.id || a.id;
+    setAssignments(p => [...p, { ...a, id: finalId }]);
+    setModal(false);
+    showNotif(`"${a.title}" oluşturuldu`);
+  };
 
   useEffect(()=>{
     const tmr=new Date(Date.now()+86400000).toISOString().slice(0,10);
@@ -2027,7 +2036,7 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
           </button>
         ))}
       </nav>
-      {modal&&<AssignModal child={mTarget} allC={allC} pool={pool} onClose={()=>setModal(false)} onSave={a=>{setAssignments(p=>[...p,a]);setModal(false);showNotif(`"${a.title}" oluşturuldu`);}}/>}
+      {modal&&<AssignModal child={mTarget} allC={allC} pool={pool} onClose={()=>setModal(false)} onSave={handleSaveAssignment}/>}
       {prevAsgn&&<AssignPreviewModal asgn={prevAsgn} pool={pool} onClose={()=>setPrevAsgn(null)} onApprove={()=>{setAssignments(p=>p.map(a=>a.id===prevAsgn.id?{...a,status:"bekliyor",approved:true}:a));setPrevAsgn(null);showNotif("Ödev onaylandı!");}}/>}
     </div>
   );
