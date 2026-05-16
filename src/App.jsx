@@ -1111,30 +1111,6 @@ function getWordPairs(letter, count = 8, zorluk = null) {
   return slice.map(p => ({ emoji: p.e, word: p.w, key: p.e, imgKey: p.k, img: getImgForWord(p.w, p.k) }));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MOCK DATA
-// ═══════════════════════════════════════════════════════════════════════════════
-const USERS = {
-  expert:{ id:"exp1",role:"expert",name:"Gökdeniz Bektaş",email:"gokdeniz66666@gmail.com",password:"uzman123" },
-  parents:[
-    { id:"p1",role:"parent",name:"Ayşe Yılmaz",email:"ayse@mail.com",password:"veli123",phone:"0532 111 2233",child:{id:"c1",name:"Mert Yılmaz",age:6,diagnosis:"Artikülasyon Bozukluğu"} },
-    { id:"p2",role:"parent",name:"Mehmet Kaya",email:"mehmet@mail.com",password:"veli456",phone:"0541 333 4455",child:{id:"c2",name:"Zeynep Kaya",age:7,diagnosis:"Dil Gecikmesi"} },
-    { id:"p3",role:"parent",name:"Fatma Demir",email:"fatma@mail.com",password:"veli789",phone:"0555 667 7889",child:{id:"c3",name:"Ali Demir",age:5,diagnosis:"Kekemelik"} },
-  ]
-};
-
-const INIT_ASGNS = [
-  {id:"a1",childId:"c1",title:"R Sesi Balon Oyunu",game:"balloon",letter:"R",difficulty:"kolay",status:"bekliyor",createdAt:"2026-04-08",dueDate:"2026-04-15",score:null,approved:true},
-  {id:"a2",childId:"c1",title:"L Sesi Kart Oyunu",game:"memory",letter:"L",difficulty:"orta",status:"tamamlandı",createdAt:"2026-04-05",dueDate:"2026-04-12",score:88,approved:true},
-  {id:"a3",childId:"c2",title:"S Sesi Balon Oyunu",game:"balloon",letter:"S",difficulty:"kolay",status:"bekliyor",createdAt:"2026-04-09",dueDate:"2026-04-16",score:null,approved:true},
-  {id:"a4",childId:"c3",title:"K Sesi Kart Eşleme",game:"memory",letter:"K",difficulty:"kolay",status:"bekliyor",createdAt:"2026-04-07",dueDate:"2026-04-14",score:null,approved:true},
-];
-
-const INIT_SESSIONS = [
-  {id:"s1",childId:"c1",date:"2026-04-14",time:"10:00",duration:45,note:"R sesi odak",notified:false},
-  {id:"s2",childId:"c2",date:"2026-04-14",time:"11:00",duration:30,note:"",notified:false},
-  {id:"s3",childId:"c3",date:"2026-04-15",time:"14:00",duration:45,note:"K sesi tekrar",notified:false},
-];
 
 // Diagnosis & class options
 const DIAGNOSES = ["Artikülasyon Bozukluğu","Dil Gecikmesi","Kekemelik","Ses Bozukluğu","Otizm Spektrum","Down Sendromu","İşitme Kaybı","Afazi","Serebral Palsi","Değerlendirme Aşamasında"];
@@ -1753,11 +1729,7 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
     try {
       const d = await sb.auth.signUp(rEmail, rPass, { name: rName, phone: rPhone });
       if(d.error) { setErr(d.error.message || "Kayıt başarısız."); return; }
-      // Profil oluştur
-      await sb.from("profiles").insert({
-        id: d.user.id, role:"parent",
-        name: rName, email: rEmail, phone: rPhone,
-      });
+      if(!d.user) { setErr("Kayıt başarısız, lütfen tekrar deneyin."); return; }
       setNewUser({ name:rName, email:rEmail, phone:rPhone, role:"parent", via:"email", authId: d.user.id });
       setMode("onboard");
     } catch(e) { setErr("Kayıt sırasında hata oluştu."); }
@@ -1768,17 +1740,24 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
     if(!newUser) return;
     setLoading2(true);
     try {
-      // Önce giriş yap
       const d = await sb.auth.signIn(newUser.email, rPass);
       if(!d.access_token) { setErr("Giriş yapılamadı."); return; }
+      // Profil kaydet (JWT ile)
+      await sb.from("profiles").upsert({
+        id:    d.user.id,
+        role:  "parent",
+        name:  newUser.name,
+        email: newUser.email,
+        phone: newUser.phone || "",
+      });
       // Öğrenciyi kaydet
       await sb.from("students").insert({
-        parent_id:  d.user.id,
-        name:       child.name,
-        age:        parseInt(child.age)||0,
-        class:      child.class||"",
-        diagnosis:  child.diagnosis||"",
-        notes:      child.notes||"",
+        parent_id: d.user.id,
+        name:      child.name,
+        age:       parseInt(child.age)||0,
+        class:     child.class||"",
+        diagnosis: child.diagnosis||"",
+        notes:     child.notes||"",
       });
       await onLogin(d.user, d.access_token);
     } catch(e) {
@@ -1973,7 +1952,7 @@ function Sidebar({ role, page, setPage, user, child, onLogout, badgeCounts={}, o
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXPERT APP
 // ═══════════════════════════════════════════════════════════════════════════════
-function ExpertApp({ user, assignments, setAssignments, pool, setPool, sessions, setSessions, onLogout, submissions, setSubmissions, onlineRequests, setOnlineRequests, availability, setAvailability }) {
+function ExpertApp({ user, students, assignments, setAssignments, pool, setPool, sessions, setSessions, onLogout, submissions, setSubmissions, onlineRequests, setOnlineRequests, availability, setAvailability }) {
   const [page,setPage]=useState("dashboard");
   const [sel,setSel]=useState(null);
   const [modal,setModal]=useState(false);
@@ -1982,7 +1961,7 @@ function ExpertApp({ user, assignments, setAssignments, pool, setPool, sessions,
   const [prevAsgn,setPrevAsgn]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
 
-  const allC=USERS.parents.map(p=>p.child);
+  const allC=students||[];
   const getA=cid=>assignments.filter(a=>a.childId===cid);
   const getProg=cid=>{const a=getA(cid);return a.length?Math.round((a.filter(x=>x.status==="tamamlandı").length/a.length)*100):0;};
 
@@ -2162,10 +2141,10 @@ function SessionModal({ session, date, allC, onClose, onSave, onDelete }) {
 function StudentsPage({ allC, getA, getProg, onView, onAssign }) {
   return (
     <div className="stu-grid">
-      {allC.map(c=>{ const par=USERS.parents.find(p=>p.child.id===c.id); const prog=getProg(c.id),a=getA(c.id);
+      {allC.map(c=>{ const prog=getProg(c.id),a=getA(c.id);
         return (
           <div key={c.id} className="stu-card" onClick={()=>onView(c)}>
-            <div className="flex ic g3 mb4"><div className="stu-av">{c.name[0]}</div><div><div className="tsm bold mb1">{c.name}</div><div className="txs muted">{par?.name} · {c.age} yaş</div>{c.diagnosis&&<div className="txs" style={{color:B.gold,marginTop:2}}>{c.diagnosis}</div>}</div></div>
+            <div className="flex ic g3 mb4"><div className="stu-av">{c.name[0]}</div><div><div className="tsm bold mb1">{c.name}</div><div className="txs muted">{c.age} yaş</div>{c.diagnosis&&<div className="txs" style={{color:B.gold,marginTop:2}}>{c.diagnosis}</div>}</div></div>
             <div className="flex ic jb mb2"><span className="txs muted">{a.length} ödev</span><span className="txs bold tg">{prog}%</span></div>
             <div className="prog-wrap mb4"><div className="prog-fill" style={{width:`${prog}%`}}/></div>
             <div className="flex g2u"><button className="btn btn-outline btn-sm fw" onClick={e=>{e.stopPropagation();onView(c);}}>Profil</button><button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();onAssign(c);}}>Ödev Ata</button></div>
@@ -2473,7 +2452,7 @@ function OnlineRequestsExpert({ requests, setRequests, allC, sessions, setSessio
     <>
       {pending.length>0&&<>
         <div className="sectitle" style={{color:B.gold}}>Yanıt Bekleyenler ({pending.length})</div>
-        {pending.map(r=>{ const c=allC.find(x=>x.id===r.childId); const par=USERS.parents.find(p=>p.child?.id===r.childId)||{name:"Veli"};
+        {pending.map(r=>{ const c=allC.find(x=>x.id===r.childId); const par={name:"Veli"};
           return <RequestCard key={r.id} r={r} child={c} parent={par} onRespond={respond}/>;
         })}
       </>}
@@ -2573,6 +2552,19 @@ function ParentApp({ user, assignments, setAssignments, pool, onLogout, submissi
   const [active,setActive]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
   const child=user.child ?? null;
+  if(!child) return (
+    <>
+      <style>{CSS}</style>
+      <div style={{minHeight:"100vh",background:"#0B1929",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{textAlign:"center",maxWidth:360}}>
+          <div style={{fontSize:48,marginBottom:16}}>👶</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:700,color:"#C9A84C",marginBottom:8}}>Kayıtlı Öğrenci Bulunamadı</div>
+          <div style={{color:"#A8B8CC",marginBottom:24}}>Hesabınıza bağlı bir öğrenci kaydı yok. Lütfen uzmanınızla iletişime geçin.</div>
+          <button className="btn btn-ghost" onClick={onLogout}>Çıkış Yap</button>
+        </div>
+      </div>
+    </>
+  );
   const myA=child ? assignments.filter(a=>a.childId===child.id&&a.approved!==false) : [];
   const done=myA.filter(a=>a.status==="tamamlandı").length;
   const prog=myA.length?Math.round((done/myA.length)*100):0;
@@ -3904,6 +3896,7 @@ export default function App() {
   const [assignments,  setAssignments]  = useState([]);
   const [pool,         setPool]         = useState([]);
   const [sessions,     setSessions]     = useState([]);
+  const [students,     setStudents]     = useState([]);
   const [regParents,   setRegParents]   = useState([]);
   const [submissions,  setSubmissions]  = useState([]);
   const [onlineRequests, setOnlineRequests] = useState([]);
@@ -3975,6 +3968,7 @@ export default function App() {
     // Uzman ise hepsini yükle
     if(profile.role === "expert") {
       const students = await loadStudents();
+      setStudents(students);
       const ids = students.map(s => s.id);
       if(ids.length) {
         const asgns = await loadAssignments(ids);
@@ -4017,7 +4011,7 @@ export default function App() {
     <>
       <style>{CSS}</style>
       {!user && <LoginPage onLogin={loginUser} regParents={regParents} setRegParents={setRegParents}/>}
-      {user?.role==="expert" && <ExpertApp user={user} assignments={assignments} setAssignments={setAssignments} pool={pool} setPool={setPool} sessions={sessions} setSessions={setSessions} onLogout={handleLogout} submissions={submissions} setSubmissions={setSubmissions} onlineRequests={onlineRequests} setOnlineRequests={setOnlineRequests} availability={availability} setAvailability={setAvailability}/>}
+      {user?.role==="expert" && <ExpertApp user={user} students={students} assignments={assignments} setAssignments={setAssignments} pool={pool} setPool={setPool} sessions={sessions} setSessions={setSessions} onLogout={handleLogout} submissions={submissions} setSubmissions={setSubmissions} onlineRequests={onlineRequests} setOnlineRequests={setOnlineRequests} availability={availability} setAvailability={setAvailability}/>}
       {user?.role==="parent" && <ParentApp user={user} assignments={assignments} setAssignments={setAssignments} pool={pool} onLogout={handleLogout} submissions={submissions} setSubmissions={setSubmissions} onlineRequests={onlineRequests} setOnlineRequests={setOnlineRequests} availability={availability}/>}
     </>
   );
