@@ -272,23 +272,38 @@ function useSupabase() {
   const loadMaterials = async () => {
     try {
       const data = await sb.from("materials").select("*");
-      if(!Array.isArray(data)) return [];
-      return data.map(m => ({ ...m, dataUrl: m.data_url }));
-    } catch(e) { return []; }
+      console.log('[loadMaterials]:', Array.isArray(data) ? `${data.length} items` : data);
+      if(!Array.isArray(data)) { console.error('[loadMaterials] error:', data); return []; }
+      return data.map(m => ({ ...m, fileUrl: m.file_url }));
+    } catch(e) {
+      console.error('[loadMaterials] exception:', e);
+      return [];
+    }
   };
 
   const saveMaterial = async (item) => {
-    return sb.from("materials").upsert({
+    const payload = {
       id:          item.id,
       name:        item.name,
-      type:        item.type,
-      size:        item.size,
-      data_url:    item.dataUrl,
-      tags:        item.tags || [],
+      type:        item.type || "pdf",
+      file_url:    item.fileUrl || "",
       letter:      item.letter || "",
       notes:       item.notes || "",
       uploaded_at: item.uploadedAt || new Date().toLocaleDateString("tr-TR"),
-    });
+    };
+    console.log('[saveMaterial] saving:', payload);
+    try {
+      const result = await sb.from("materials").upsert(payload);
+      if(Array.isArray(result) && result[0]?.code) {
+        console.error('[saveMaterial] Supabase error:', result[0]);
+      } else {
+        console.log('[saveMaterial] saved OK:', result?.[0]?.id || item.id);
+      }
+      return result;
+    } catch(e) {
+      console.error('[saveMaterial] exception:', e);
+      return null;
+    }
   };
 
   const deleteMaterial = async (id) => {
@@ -2357,7 +2372,7 @@ function AssignPreviewModal({ asgn, pool, onClose, onApprove }) {
       <div className="mbox mbox-lg">
         <div className="mhdr"><div className="mtitle">Ödev Önizleme</div><button className="mx" onClick={onClose}>✕</button></div>
         <div style={{background:B.surf3,borderRadius:10,padding:"14px 18px",marginBottom:20}}><div className="flex ic jb"><div><div className="bold tsm mb1">{asgn.title}</div><div className="txs muted">{gameLabel(asgn.game)} · {asgn.letter} Sesi · {asgn.difficulty}</div></div><SBadge s={asgn.status}/></div></div>
-        {asgn.game==="pdf"&&pi?<div style={{textAlign:"center"}}>{pi.type==="image"?<img src={pi.dataUrl} alt={pi.name} style={{maxWidth:"100%",maxHeight:360,borderRadius:9,border:`1px solid ${B.border}`}}/>:<div style={{padding:32,color:B.text3,fontSize:40}}>📄</div>}</div>:
+        {asgn.game==="pdf"&&pi?<div style={{textAlign:"center",padding:20}}><div style={{fontSize:48,marginBottom:12}}>📄</div>{pi.fileUrl&&<a href={pi.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">PDF Görüntüle</a>}</div>:
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:8}}>
             {words.map((w,i)=><div key={i} style={{background:B.surf3,borderRadius:9,padding:"10px",textAlign:"center",border:`1px solid ${B.border}`}}><div style={{marginBottom:4,display:"flex",justifyContent:"center"}}><WordImg word={w.word} emoji={w.emoji} size={32}/></div><div className="txs bold">{w.word}</div></div>)}
           </div>
@@ -2552,37 +2567,38 @@ function RequestCard({ r, child, parent, onRespond }) {
 
 // ─── MATERIAL POOL ─────────────────────────────────────────────────────────────
 function MaterialPool({ pool, setPool }) {
-  const [tab,setTab]=useState("all"); const [editItem,setEdit]=useState(null); const [modal,setModal]=useState(false); const [drag,setDrag]=useState(false); const fileRef=useRef();
+  const [editItem,setEdit]=useState(null); const [modal,setModal]=useState(false);
   const { saveMaterial, deleteMaterial } = useSupabase();
-  const fil=tab==="all"?pool:pool.filter(p=>p.type===tab);
-  const handleFiles=fs=>Array.from(fs).forEach(file=>{ if(!file.type.match(/image\/(png|jpeg|webp)|application\/pdf/)) return; const r=new FileReader(); r.onload=e=>{ const item={id:"m"+Date.now()+Math.random(),name:file.name.replace(/\.[^.]+$/,""),type:file.type.includes("pdf")?"pdf":"image",size:(file.size/1024).toFixed(0)+"KB",dataUrl:e.target.result,tags:[],letter:"",notes:"",uploadedAt:new Date().toLocaleDateString("tr-TR")}; setPool(p=>[...p,item]); saveMaterial(item); setEdit(item); setModal(true); }; r.readAsDataURL(file); });
+  const openAdd=()=>{ setEdit({id:crypto.randomUUID(),name:"",fileUrl:"",type:"pdf",letter:"",notes:"",uploadedAt:new Date().toLocaleDateString("tr-TR")}); setModal(true); };
+  const saveItem=()=>{ if(!editItem.name||!editItem.fileUrl) return; setPool(p=>p.find(x=>x.id===editItem.id)?p.map(x=>x.id===editItem.id?editItem:x):[...p,editItem]); saveMaterial(editItem); setModal(false); setEdit(null); };
   return (
     <>
-      <div className="flex ic jb mb4"><div><div className="serif" style={{fontSize:20,fontWeight:700,color:B.gold}}>Materyal Havuzu</div><div className="txs muted mt1">{pool.length} materyal</div></div><button className="btn btn-gold btn-sm" onClick={()=>fileRef.current.click()}>{IC.upload} Yükle</button><input ref={fileRef} type="file" multiple accept="image/*,application/pdf" style={{display:"none"}} onChange={e=>handleFiles(e.target.files)}/></div>
-      <div className={`upload-zone mb4 ${drag?"drag":""}`} onClick={()=>fileRef.current.click()} onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);handleFiles(e.dataTransfer.files);}}>
-        <div style={{fontSize:36,marginBottom:10,color:B.text3}}>{IC.upload}</div><div className="bold tsm mb1" style={{color:B.text2}}>PNG, JPG, PDF yükleyin</div><div className="txs muted">Boyama, etkinlik, PDF ödevler</div>
+      <div className="flex ic jb mb4"><div><div className="serif" style={{fontSize:20,fontWeight:700,color:B.gold}}>Materyal Havuzu</div><div className="txs muted mt1">{pool.length} materyal</div></div><button className="btn btn-gold btn-sm" onClick={openAdd}>{IC.plus} Materyal Ekle</button></div>
+      <div className="upload-zone mb4" style={{cursor:"default",pointerEvents:"none"}}>
+        <div style={{fontSize:36,marginBottom:10,color:B.text3}}>🔗</div><div className="bold tsm mb1" style={{color:B.text2}}>Google Drive veya herhangi bir URL yapıştırın</div><div className="txs muted">PDF ödevler, etkinlikler, görseller</div>
       </div>
-      <div className="tabs">{["all","image","pdf"].map(t=><button key={t} className={`tab ${tab===t?"on":""}`} onClick={()=>setTab(t)}>{t==="all"?"Tümü":t==="image"?"Görseller":"PDF"}</button>)}</div>
       <div className="pool-grid">
-        {fil.map(item=>(
+        {pool.map(item=>(
           <div key={item.id} className="pool-card">
-            {item.type==="image"?<img src={item.dataUrl} alt={item.name} className="pool-thumb"/>:<div className="pool-ph"><span style={{fontSize:36}}>📄</span><span className="txs muted">PDF</span></div>}
+            <div className="pool-ph"><span style={{fontSize:36}}>📄</span><span className="txs muted">{(item.type||"pdf").toUpperCase()}</span></div>
             <div className="pool-body">
-              <div className="pool-name">{item.name}</div><div className="pool-meta">{item.type.toUpperCase()} · {item.size}</div>
+              <div className="pool-name">{item.name}</div>
+              <div className="pool-meta" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{item.fileUrl}</div>
               {item.letter&&<span className="badge bn">{item.letter}</span>}
-              <div className="flex g2 mt2"><button className="btn btn-ghost btn-xs fw" onClick={()=>{setEdit(item);setModal(true);}}>Düzenle</button><a href={item.dataUrl} download={item.name} className="btn btn-ghost btn-xs">{IC.dl}</a><button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>{setPool(p=>p.filter(x=>x.id!==item.id));deleteMaterial(item.id);}}>{IC.trash}</button></div>
+              <div className="flex g2 mt2"><button className="btn btn-ghost btn-xs fw" onClick={()=>{setEdit(item);setModal(true);}}>Düzenle</button><a href={item.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-xs">{IC.eye}</a><button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>{setPool(p=>p.filter(x=>x.id!==item.id));deleteMaterial(item.id);}}>{IC.trash}</button></div>
             </div>
           </div>
         ))}
       </div>
-      {fil.length===0&&<div className="card" style={{textAlign:"center",padding:48,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📁</div><div className="bold tsm">Henüz materyal yok</div></div>}
+      {pool.length===0&&<div className="card" style={{textAlign:"center",padding:48,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📁</div><div className="bold tsm">Henüz materyal yok</div><div className="txs mt2">Materyal Ekle butonundan URL yapıştırın.</div></div>}
       {modal&&editItem&&<div className="mov" onClick={e=>e.target===e.currentTarget&&(setModal(false),setEdit(null))}>
-        <div className="mbox"><div className="mhdr"><div className="mtitle">Materyal Düzenle</div><button className="mx" onClick={()=>{setModal(false);setEdit(null);}}>✕</button></div>
-          <div className="f-group"><label className="f-label">Ad</label><input className="f-input" value={editItem.name} onChange={e=>setEdit(p=>({...p,name:e.target.value}))}/></div>
-          <div className="f-row"><div className="f-group"><label className="f-label">Hedef Harf</label><select className="f-select" value={editItem.letter||""} onChange={e=>setEdit(p=>({...p,letter:e.target.value}))}><option value="">—</option>{UNSUZ.map(l=><option key={l} value={l}>{l}</option>)}</select></div><div className="f-group"><label className="f-label">Etiketler</label><input className="f-input" value={editItem.tags?.join(", ")||""} onChange={e=>setEdit(p=>({...p,tags:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)}))} placeholder="boyama, kolay"/></div></div>
+        <div className="mbox"><div className="mhdr"><div className="mtitle">{pool.find(x=>x.id===editItem.id)?"Materyal Düzenle":"Materyal Ekle"}</div><button className="mx" onClick={()=>{setModal(false);setEdit(null);}}>✕</button></div>
+          <div className="f-group"><label className="f-label">Ad *</label><input className="f-input" value={editItem.name} onChange={e=>setEdit(p=>({...p,name:e.target.value}))} placeholder="Örn: R Sesi Boyama Sayfası"/></div>
+          <div className="f-group"><label className="f-label">URL * (Google Drive, PDF linki...)</label><input className="f-input" value={editItem.fileUrl||""} onChange={e=>setEdit(p=>({...p,fileUrl:e.target.value}))} placeholder="https://drive.google.com/..."/></div>
+          <div className="f-row"><div className="f-group"><label className="f-label">Hedef Harf</label><select className="f-select" value={editItem.letter||""} onChange={e=>setEdit(p=>({...p,letter:e.target.value}))}><option value="">—</option>{UNSUZ.map(l=><option key={l} value={l}>{l}</option>)}</select></div><div className="f-group"><label className="f-label">Tür</label><select className="f-select" value={editItem.type||"pdf"} onChange={e=>setEdit(p=>({...p,type:e.target.value}))}><option value="pdf">PDF</option><option value="image">Görsel</option><option value="link">Link</option></select></div></div>
           <div className="f-group"><label className="f-label">Notlar</label><textarea className="f-textarea" value={editItem.notes||""} onChange={e=>setEdit(p=>({...p,notes:e.target.value}))}/></div>
           <div className="f-divider"/>
-          <div className="flex g2"><button className="btn btn-ghost fw" onClick={()=>{setModal(false);setEdit(null);}}>İptal</button><button className="btn btn-gold fw" onClick={()=>{setPool(p=>p.map(x=>x.id===editItem.id?editItem:x));saveMaterial(editItem);setModal(false);setEdit(null);}}>Kaydet</button></div>
+          <div className="flex g2"><button className="btn btn-ghost fw" onClick={()=>{setModal(false);setEdit(null);}}>İptal</button><button className="btn btn-gold fw" onClick={saveItem} disabled={!editItem.name||!editItem.fileUrl}>Kaydet</button></div>
         </div>
       </div>}
     </>
@@ -2719,7 +2735,7 @@ function PTasks({ myA, startGame, pool, submissions, setSubmissions, child, assi
             <SBadge s={a.status}/>
             {a.game!=="pdf"&&<button className="btn btn-gold btn-sm" onClick={()=>startGame(a)}>{a.status==="tamamlandı"?"Tekrar Oyna":"Oyna"}</button>}
             {a.game!=="pdf"&&<button className="btn btn-ghost btn-sm" onClick={()=>setSubmitModal(a)} title="Fotoğraflı Teslim">{IC.img}</button>}
-            {a.game==="pdf"&&(()=>{ const mat=pool.find(p=>p.id===a.poolItemId); return mat ? <a href={mat.dataUrl} download={mat.name||"odev.pdf"} className="btn btn-gold btn-sm">{IC.dl} PDF İndir</a> : <span className="txs muted">PDF yükleniyor...</span>; })()}
+            {a.game==="pdf"&&(()=>{ const mat=pool.find(p=>p.id===a.poolItemId); return mat?.fileUrl ? <a href={mat.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-gold btn-sm">PDF Görüntüle</a> : <span className="txs muted">PDF bekleniyor...</span>; })()}
             {a.score!=null&&<span className="badge bn">{a.score}</span>}
           </div>
         </div>
@@ -3929,8 +3945,9 @@ function PDFGame({ a, pool, onComplete, onBack }) {
       <button className="btn btn-ghost btn-sm mb4" onClick={onBack}>{IC.back} Geri</button>
       <div className="ghdr"><div className="gbadge">{a.letter}</div><div className="gtitle">{a.title}</div></div>
       <div className="card" style={{textAlign:"center"}}>
-        {item?<>{item.type==="image"?<img src={item.dataUrl} alt={item.name} style={{maxWidth:"100%",maxHeight:420,borderRadius:9,marginBottom:20,border:`1px solid ${B.border}`}}/>:<div style={{padding:32,fontSize:64}}>📄</div>}{item.notes&&<div className="tsm muted mb4">{item.notes}</div>}<div className="flex g2" style={{justifyContent:"center"}}><a href={item.dataUrl} download={item.name} className="btn btn-outline">{IC.dl} İndir & Yazdır</a><button className="btn btn-success" onClick={()=>onComplete(100)}>✓ Tamamladım</button></div></>:
-          <div style={{padding:40,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📄</div><button className="btn btn-success mt4" onClick={()=>onComplete(100)}>Tamamladım</button></div>}
+        {item?.fileUrl
+          ? <><div style={{fontSize:64,marginBottom:12}}>📄</div>{item.notes&&<div className="tsm muted mb4">{item.notes}</div>}<div className="flex g2" style={{justifyContent:"center"}}><a href={item.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-outline">PDF Görüntüle</a><button className="btn btn-success" onClick={()=>onComplete(100)}>✓ Tamamladım</button></div></>
+          : <div style={{padding:40,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📄</div><div className="txs muted mb4">PDF bağlantısı bulunamadı.</div><button className="btn btn-success" onClick={()=>onComplete(100)}>Tamamladım</button></div>}
       </div>
     </div>
   );
