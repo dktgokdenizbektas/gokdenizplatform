@@ -267,6 +267,33 @@ function useSupabase() {
     return sb.from("session_requests").update(data, `id=eq.${id}`);
   };
 
+  // Materyaller
+  const loadMaterials = async () => {
+    try {
+      const data = await sb.from("materials").select("*");
+      if(!Array.isArray(data)) return [];
+      return data.map(m => ({ ...m, dataUrl: m.data_url }));
+    } catch(e) { return []; }
+  };
+
+  const saveMaterial = async (item) => {
+    return sb.from("materials").upsert({
+      id:          item.id,
+      name:        item.name,
+      type:        item.type,
+      size:        item.size,
+      data_url:    item.dataUrl,
+      tags:        item.tags || [],
+      letter:      item.letter || "",
+      notes:       item.notes || "",
+      uploaded_at: item.uploadedAt || new Date().toLocaleDateString("tr-TR"),
+    });
+  };
+
+  const deleteMaterial = async (id) => {
+    return sb.from("materials").delete(`id=eq.${id}`);
+  };
+
   // Müsait saatler
   const loadAvailability = async () => {
     const data = await sb.from("availability").select("*", "active=eq.true");
@@ -311,6 +338,7 @@ function useSupabase() {
     saveAssignment, updateAssignment,
     saveSubmission, deleteSubmission,
     upsertProfile, saveStudent,
+    loadMaterials, saveMaterial, deleteMaterial,
     loadRequests, saveRequest, updateRequest,
     loadAvailability, saveAvailability, deleteAvailability,
     loadSessions, saveSession,
@@ -1928,6 +1956,8 @@ function Sidebar({ role, page, setPage, user, child, onLogout, badgeCounts={}, o
     {id:"students", icon:IC.users, label:"Öğrenciler"},
     {id:"tasks",    icon:IC.task,  label:"Ödevler",   badge:"tasks"},
     {id:"inbox",    icon:IC.inbox, label:"Teslimler", badge:"inbox"},
+    {id:"online",   icon:IC.video, label:"Online Talepler", badge:"online"},
+    {id:"avail",    icon:IC.cal,   label:"Müsait Saatler"},
     {id:"pool",     icon:IC.pool,  label:"Materyaller"},
     {id:"ai",       icon:IC.ai,    label:"AI Araçları"},
   ];
@@ -2522,8 +2552,9 @@ function RequestCard({ r, child, parent, onRespond }) {
 // ─── MATERIAL POOL ─────────────────────────────────────────────────────────────
 function MaterialPool({ pool, setPool }) {
   const [tab,setTab]=useState("all"); const [editItem,setEdit]=useState(null); const [modal,setModal]=useState(false); const [drag,setDrag]=useState(false); const fileRef=useRef();
+  const { saveMaterial, deleteMaterial } = useSupabase();
   const fil=tab==="all"?pool:pool.filter(p=>p.type===tab);
-  const handleFiles=fs=>Array.from(fs).forEach(file=>{ if(!file.type.match(/image\/(png|jpeg|webp)|application\/pdf/)) return; const r=new FileReader(); r.onload=e=>{ const item={id:"m"+Date.now()+Math.random(),name:file.name.replace(/\.[^.]+$/,""),type:file.type.includes("pdf")?"pdf":"image",size:(file.size/1024).toFixed(0)+"KB",dataUrl:e.target.result,tags:[],letter:"",notes:"",uploadedAt:new Date().toLocaleDateString("tr-TR")}; setPool(p=>[...p,item]); setEdit(item); setModal(true); }; r.readAsDataURL(file); });
+  const handleFiles=fs=>Array.from(fs).forEach(file=>{ if(!file.type.match(/image\/(png|jpeg|webp)|application\/pdf/)) return; const r=new FileReader(); r.onload=e=>{ const item={id:"m"+Date.now()+Math.random(),name:file.name.replace(/\.[^.]+$/,""),type:file.type.includes("pdf")?"pdf":"image",size:(file.size/1024).toFixed(0)+"KB",dataUrl:e.target.result,tags:[],letter:"",notes:"",uploadedAt:new Date().toLocaleDateString("tr-TR")}; setPool(p=>[...p,item]); saveMaterial(item); setEdit(item); setModal(true); }; r.readAsDataURL(file); });
   return (
     <>
       <div className="flex ic jb mb4"><div><div className="serif" style={{fontSize:20,fontWeight:700,color:B.gold}}>Materyal Havuzu</div><div className="txs muted mt1">{pool.length} materyal</div></div><button className="btn btn-gold btn-sm" onClick={()=>fileRef.current.click()}>{IC.upload} Yükle</button><input ref={fileRef} type="file" multiple accept="image/*,application/pdf" style={{display:"none"}} onChange={e=>handleFiles(e.target.files)}/></div>
@@ -2538,7 +2569,7 @@ function MaterialPool({ pool, setPool }) {
             <div className="pool-body">
               <div className="pool-name">{item.name}</div><div className="pool-meta">{item.type.toUpperCase()} · {item.size}</div>
               {item.letter&&<span className="badge bn">{item.letter}</span>}
-              <div className="flex g2 mt2"><button className="btn btn-ghost btn-xs fw" onClick={()=>{setEdit(item);setModal(true);}}>Düzenle</button><a href={item.dataUrl} download={item.name} className="btn btn-ghost btn-xs">{IC.dl}</a><button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>setPool(p=>p.filter(x=>x.id!==item.id))}>{IC.trash}</button></div>
+              <div className="flex g2 mt2"><button className="btn btn-ghost btn-xs fw" onClick={()=>{setEdit(item);setModal(true);}}>Düzenle</button><a href={item.dataUrl} download={item.name} className="btn btn-ghost btn-xs">{IC.dl}</a><button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>{setPool(p=>p.filter(x=>x.id!==item.id));deleteMaterial(item.id);}}>{IC.trash}</button></div>
             </div>
           </div>
         ))}
@@ -2550,7 +2581,7 @@ function MaterialPool({ pool, setPool }) {
           <div className="f-row"><div className="f-group"><label className="f-label">Hedef Harf</label><select className="f-select" value={editItem.letter||""} onChange={e=>setEdit(p=>({...p,letter:e.target.value}))}><option value="">—</option>{UNSUZ.map(l=><option key={l} value={l}>{l}</option>)}</select></div><div className="f-group"><label className="f-label">Etiketler</label><input className="f-input" value={editItem.tags?.join(", ")||""} onChange={e=>setEdit(p=>({...p,tags:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)}))} placeholder="boyama, kolay"/></div></div>
           <div className="f-group"><label className="f-label">Notlar</label><textarea className="f-textarea" value={editItem.notes||""} onChange={e=>setEdit(p=>({...p,notes:e.target.value}))}/></div>
           <div className="f-divider"/>
-          <div className="flex g2"><button className="btn btn-ghost fw" onClick={()=>{setModal(false);setEdit(null);}}>İptal</button><button className="btn btn-gold fw" onClick={()=>{setPool(p=>p.map(x=>x.id===editItem.id?editItem:x));setModal(false);setEdit(null);}}>Kaydet</button></div>
+          <div className="flex g2"><button className="btn btn-ghost fw" onClick={()=>{setModal(false);setEdit(null);}}>İptal</button><button className="btn btn-gold fw" onClick={()=>{setPool(p=>p.map(x=>x.id===editItem.id?editItem:x));saveMaterial(editItem);setModal(false);setEdit(null);}}>Kaydet</button></div>
         </div>
       </div>}
     </>
@@ -3940,6 +3971,7 @@ export default function App() {
   const [onlineRequests, setOnlineRequests] = useState([]);
   const [availability, setAvailability] = useState([]);
   const { loadAssignments, loadStudents, loadProfile,
+          loadMaterials,
           loadRequests, loadAvailability, loadSessions } = useSupabase();
 
   // Oturum kontrolü — sayfa yenilenince tekrar giriş istemez
@@ -4011,6 +4043,14 @@ export default function App() {
           console.error('[loginUser] failed to load parent students:', e);
           fullUser.child = null;
         }
+      }
+
+      // Materyalleri her iki rol için yükle
+      try {
+        const materials = await loadMaterials();
+        setPool(materials);
+      } catch(e) {
+        console.error('[loginUser] failed to load materials:', e);
       }
 
       // Uzman ise hepsini yükle
