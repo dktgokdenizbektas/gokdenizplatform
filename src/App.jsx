@@ -1977,13 +1977,18 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
   const [notif,setNotif]=useState("");
   const [prevAsgn,setPrevAsgn]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
-  const { saveAssignment } = useSupabase();
+  const { saveAssignment, updateAssignment } = useSupabase();
 
   const allC=students||[];
   const getA=cid=>assignments.filter(a=>a.childId===cid);
   const getProg=cid=>{const a=getA(cid);return a.length?Math.round((a.filter(x=>x.status==="tamamlandı").length/a.length)*100):0;};
 
   const showNotif=msg=>{setNotif(msg);setTimeout(()=>setNotif(""),5000);};
+
+  const handleApprove = async (id) => {
+    await updateAssignment(id, { status: "bekliyor", approved: true });
+    setAssignments(p => p.map(a => a.id === id ? { ...a, status: "bekliyor", approved: true } : a));
+  };
 
   const handleSaveAssignment = async (a) => {
     console.log('[handleSaveAssignment] called with:', a);
@@ -2028,8 +2033,8 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
             {page==="dashboard"&&<EDash assignments={assignments} allC={allC} getProg={getProg} sessions={sessions} pendingSubmissions={pendingSubmissions} pendingOnline={pendingOnline} setPage={setPage}/>}
             {page==="calendar" &&<SessionCalendar sessions={sessions} setSessions={setSessions} allC={allC} assignments={assignments} setAssignments={setAssignments}/>}
             {page==="students" &&<StudentsPage allC={allC} getA={getA} getProg={getProg} onView={c=>{setSel(c);setPage("stu-d");}} onAssign={c=>{setMTarget(c);setModal(true);}}/>}
-            {page==="stu-d"    &&<StuDetail child={sel} asgns={getA(sel?.id)} submissions={submissions} onBack={()=>setPage("students")} onAssign={()=>{setMTarget(sel);setModal(true);}} onApprove={id=>setAssignments(p=>p.map(a=>a.id===id?{...a,status:"bekliyor",approved:true}:a))}/>}
-            {page==="tasks"    &&<AllTasks assignments={assignments} setAssignments={setAssignments} allC={allC} onPreview={setPrevAsgn} pool={pool}/>}
+            {page==="stu-d"    &&<StuDetail child={sel} asgns={getA(sel?.id)} submissions={submissions} onBack={()=>setPage("students")} onAssign={()=>{setMTarget(sel);setModal(true);}} onApprove={handleApprove}/>}
+            {page==="tasks"    &&<AllTasks assignments={assignments} setAssignments={setAssignments} allC={allC} onPreview={setPrevAsgn} pool={pool} onApprove={handleApprove}/>}
             {page==="inbox"    &&<SubmissionInbox submissions={submissions} setSubmissions={setSubmissions} assignments={assignments} allC={allC}/>}
             {page==="online"   &&<OnlineRequestsExpert requests={onlineRequests} setRequests={setOnlineRequests} allC={allC} sessions={sessions} setSessions={setSessions} showNotif={showNotif}/>}
             {page==="pool"     &&<MaterialPool pool={pool} setPool={setPool}/>}
@@ -2048,7 +2053,7 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
         ))}
       </nav>
       {modal&&<AssignModal child={mTarget} allC={allC} pool={pool} onClose={()=>setModal(false)} onSave={handleSaveAssignment}/>}
-      {prevAsgn&&<AssignPreviewModal asgn={prevAsgn} pool={pool} onClose={()=>setPrevAsgn(null)} onApprove={()=>{setAssignments(p=>p.map(a=>a.id===prevAsgn.id?{...a,status:"bekliyor",approved:true}:a));setPrevAsgn(null);showNotif("Ödev onaylandı!");}}/>}
+      {prevAsgn&&<AssignPreviewModal asgn={prevAsgn} pool={pool} onClose={()=>setPrevAsgn(null)} onApprove={()=>{handleApprove(prevAsgn.id);setPrevAsgn(null);showNotif("Ödev onaylandı!");}}/>}
     </div>
   );
 }
@@ -2218,7 +2223,7 @@ function StuDetail({ child, asgns, submissions, onBack, onAssign, onApprove }) {
 }
 
 // ─── ALL TASKS ─────────────────────────────────────────────────────────────────
-function AllTasks({ assignments, setAssignments, allC, onPreview, pool }) {
+function AllTasks({ assignments, setAssignments, allC, onPreview, pool, onApprove }) {
   const [tab,setTab]=useState("all");
   const fil=tab==="all"?assignments:assignments.filter(a=>a.status===tab);
   return (
@@ -2234,7 +2239,7 @@ function AllTasks({ assignments, setAssignments, allC, onPreview, pool }) {
             <td>{a.score?<span className="badge bg">{a.score}</span>:"—"}</td>
             <td><div className="flex g1">
               <button className="btn btn-ghost btn-xs" onClick={()=>onPreview(a)}>{IC.eye}</button>
-              {a.status==="onay bekliyor"&&<button className="btn btn-success btn-xs" onClick={()=>setAssignments(p=>p.map(x=>x.id===a.id?{...x,status:"bekliyor",approved:true}:x))}>Onayla</button>}
+              {a.status==="onay bekliyor"&&<button className="btn btn-success btn-xs" onClick={()=>onApprove(a.id)}>Onayla</button>}
               <button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>setAssignments(p=>p.filter(x=>x.id!==a.id))}>{IC.trash}</button>
             </div></td>
           </tr>);
