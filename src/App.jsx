@@ -2311,7 +2311,7 @@ function AssignModal({ child, allC, pool, onClose, onSave }) {
   const refreshOne=i=>{ const pool2=(EMOJI_DICT[letter]||[]).filter(em=>!words.find((w,wi)=>wi!==i&&w.key===em)); if(!pool2.length) return; const em=pool2[Math.floor(Math.random()*pool2.length)]; setWords(p=>p.map((w,wi)=>wi===i?{emoji:em,word:WORD_MAP[em]||letter,key:em}:w)); };
   const startEdit=i=>{setEditIdx(i);setEEmoji(words[i].emoji);setEWord(words[i].word);};
   const saveEdit=()=>{ if(!eWord.trim()) return; setWords(p=>p.map((w,wi)=>wi===editIdx?{emoji:eEmoji||w.emoji,word:eWord.trim(),key:eEmoji||w.emoji}:w)); setEditIdx(null); };
-  const save=()=>{ if(!cid||!title) return; onSave({id:"a"+Date.now(),childId:cid,title,game,letter,difficulty:diff,status:"onay bekliyor",createdAt:new Date().toISOString().slice(0,10),dueDate:due,score:null,approved:false,poolItemId:poolId||undefined,customWords:words}); };
+  const save=()=>{ if(!cid||!title) return; const mat=game==="pdf"?pool.find(p=>p.id===poolId):null; onSave({id:"a"+Date.now(),childId:cid,title,game,letter,difficulty:diff,status:"onay bekliyor",createdAt:new Date().toISOString().slice(0,10),dueDate:due,score:null,approved:false,poolItemId:poolId||undefined,customWords:game==="pdf"?{pdfUrl:mat?.fileUrl||""}:words}); };
   return (
     <div className="mov" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="mbox mbox-lg">
@@ -2374,7 +2374,7 @@ function AssignPreviewModal({ asgn, pool, onClose, onApprove }) {
       <div className="mbox mbox-lg">
         <div className="mhdr"><div className="mtitle">Ödev Önizleme</div><button className="mx" onClick={onClose}>✕</button></div>
         <div style={{background:B.surf3,borderRadius:10,padding:"14px 18px",marginBottom:20}}><div className="flex ic jb"><div><div className="bold tsm mb1">{asgn.title}</div><div className="txs muted">{gameLabel(asgn.game)} · {asgn.letter} Sesi · {asgn.difficulty}</div></div><SBadge s={asgn.status}/></div></div>
-        {asgn.game==="pdf"&&pi?<div style={{textAlign:"center",padding:20}}><div style={{fontSize:48,marginBottom:12}}>📄</div>{pi.fileUrl&&<a href={pi.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">PDF Görüntüle</a>}</div>:
+        {asgn.game==="pdf"?<div style={{textAlign:"center",padding:20}}><div style={{fontSize:48,marginBottom:12}}>📄</div>{(asgn.fileUrl||pi?.fileUrl)&&<a href={asgn.fileUrl||pi.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">PDF Görüntüle</a>}</div>:
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:8}}>
             {words.map((w,i)=><div key={i} style={{background:B.surf3,borderRadius:9,padding:"10px",textAlign:"center",border:`1px solid ${B.border}`}}><div style={{marginBottom:4,display:"flex",justifyContent:"center"}}><WordImg word={w.word} emoji={w.emoji} size={32}/></div><div className="txs bold">{w.word}</div></div>)}
           </div>
@@ -2737,7 +2737,7 @@ function PTasks({ myA, startGame, pool, submissions, setSubmissions, child, assi
             <SBadge s={a.status}/>
             {a.game!=="pdf"&&<button className="btn btn-gold btn-sm" onClick={()=>startGame(a)}>{a.status==="tamamlandı"?"Tekrar Oyna":"Oyna"}</button>}
             {a.game!=="pdf"&&<button className="btn btn-ghost btn-sm" onClick={()=>setSubmitModal(a)} title="Fotoğraflı Teslim">{IC.img}</button>}
-            {a.game==="pdf"&&(()=>{ const mat=pool.find(p=>p.id===a.poolItemId); return mat?.fileUrl ? <a href={mat.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-gold btn-sm">PDF Görüntüle</a> : <span className="txs muted">PDF bekleniyor...</span>; })()}
+            {a.game==="pdf"&&(a.fileUrl ? <a href={a.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-gold btn-sm">PDF Görüntüle</a> : <span className="txs muted">PDF bekleniyor...</span>)}
             {a.score!=null&&<span className="badge bn">{a.score}</span>}
           </div>
         </div>
@@ -3941,14 +3941,14 @@ function BalloonGame({ a, customWords, onComplete, onBack }) {
 }
 
 function PDFGame({ a, pool, onComplete, onBack }) {
-  const item=pool?.find(p=>p.id===a.poolItemId);
+  const url=a.fileUrl||pool?.find(p=>p.id===a.poolItemId)?.fileUrl||"";
   return (
     <div className="gpg">
       <button className="btn btn-ghost btn-sm mb4" onClick={onBack}>{IC.back} Geri</button>
       <div className="ghdr"><div className="gbadge">{a.letter}</div><div className="gtitle">{a.title}</div></div>
       <div className="card" style={{textAlign:"center"}}>
-        {item?.fileUrl
-          ? <><div style={{fontSize:64,marginBottom:12}}>📄</div>{item.notes&&<div className="tsm muted mb4">{item.notes}</div>}<div className="flex g2" style={{justifyContent:"center"}}><a href={item.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-outline">PDF Görüntüle</a><button className="btn btn-success" onClick={()=>onComplete(100)}>✓ Tamamladım</button></div></>
+        {url
+          ? <><div style={{fontSize:64,marginBottom:12}}>📄</div><div className="flex g2" style={{justifyContent:"center"}}><a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-outline">PDF Görüntüle</a><button className="btn btn-success" onClick={()=>onComplete(100)}>✓ Tamamladım</button></div></>
           : <div style={{padding:40,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📄</div><div className="txs muted mb4">PDF bağlantısı bulunamadı.</div><button className="btn btn-success" onClick={()=>onComplete(100)}>Tamamladım</button></div>}
       </div>
     </div>
@@ -4054,7 +4054,9 @@ export default function App() {
             console.log('[loginUser:parent] assignments result:', asgns);
             setAssignments(asgns.map(a => ({
               ...a, childId: a.student_id, dueDate: a.due_date,
-              customWords: a.custom_words, poolItemId: a.pool_item_id,
+              customWords: Array.isArray(a.custom_words) ? a.custom_words : [],
+              poolItemId: a.pool_item_id,
+              fileUrl: (!Array.isArray(a.custom_words) && a.custom_words?.pdfUrl) ? a.custom_words.pdfUrl : "",
             })));
           } else {
             fullUser.child = null;
@@ -4083,7 +4085,9 @@ export default function App() {
             const asgns = await loadAssignments(ids);
             setAssignments(asgns.map(a => ({
               ...a, childId: a.student_id, dueDate: a.due_date,
-              customWords: a.custom_words, poolItemId: a.pool_item_id,
+              customWords: Array.isArray(a.custom_words) ? a.custom_words : [],
+              poolItemId: a.pool_item_id,
+              fileUrl: (!Array.isArray(a.custom_words) && a.custom_words?.pdfUrl) ? a.custom_words.pdfUrl : "",
             })));
           }
         } catch(e) {
