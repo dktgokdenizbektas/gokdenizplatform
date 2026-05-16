@@ -3982,10 +3982,14 @@ export default function App() {
       if(profile.role === "parent") {
         try {
           const students = await loadStudents();
+          console.log('[loginUser:parent] all students from DB:', students);
           const myStudent = students.find(s => s.parent_id === authUser.id);
+          console.log('[loginUser:parent] student matched for user', authUser.id, ':', myStudent);
           if(myStudent) {
             fullUser.child = myStudent;
+            console.log('[loginUser:parent] fetching assignments for student_id:', myStudent.id);
             const asgns = await loadAssignments([myStudent.id]);
+            console.log('[loginUser:parent] assignments result:', asgns);
             setAssignments(asgns.map(a => ({
               ...a, childId: a.student_id, dueDate: a.due_date,
               customWords: a.custom_words,
