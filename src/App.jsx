@@ -291,7 +291,7 @@ function useSupabase() {
       tags:        Array.isArray(item.tags) ? item.tags : null,
       notes:       item.notes || null,
       size:        item.size ? (parseInt(item.size, 10) || null) : null,
-      uploaded_at: item.uploadedAt || new Date().toLocaleDateString("tr-TR"),
+      uploaded_at: item.uploadedAt || new Date().toISOString().slice(0, 10),
     };
     console.log('[saveMaterial] saving:', payload);
     try {
