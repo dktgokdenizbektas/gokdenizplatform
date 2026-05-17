@@ -314,12 +314,14 @@ function useSupabase() {
 
   // Müsait saatler
   const loadAvailability = async () => {
-    const data = await sb.from("availability").select("*", "active=eq.true");
-    return Array.isArray(data) ? data : [];
+    try {
+      const data = await sb.from("availability").select("*");
+      return Array.isArray(data) ? data : [];
+    } catch(e) { return []; }
   };
 
-  const saveAvailability = async (slot) => {
-    return sb.from("availability").insert(slot);
+  const saveAvailability = async (entry) => {
+    return sb.from("availability").upsert(entry);
   };
 
   const deleteAvailability = async (id) => {
@@ -2442,12 +2444,13 @@ function SubmissionInbox({ submissions, setSubmissions, assignments, allC }) {
 // ─── AVAILABILITY MANAGER ──────────────────────────────────────────────────────
 function AvailabilityManager({ availability, setAvailability }) {
   const [modal,setModal]=useState(false);
-  const [type,setType]=useState("weekly"); // weekly | single
+  const [type,setType]=useState("weekly");
   const [selDay,setSelDay]=useState("Pazartesi");
   const [selDate,setSelDate]=useState("");
   const [startT,setStartT]=useState("09:00");
   const [endT,setEndT]=useState("17:00");
   const [interval,setInterval]=useState(60);
+  const { saveAvailability, deleteAvailability } = useSupabase();
 
   const generateSlots=(s,e,iv)=>{
     const slots=[];
@@ -2460,12 +2463,20 @@ function AvailabilityManager({ availability, setAvailability }) {
   const save=()=>{
     const slots=generateSlots(startT,endT,interval);
     if(!slots.length) return;
-    const entry={ id:"av"+Date.now(), type, day:type==="weekly"?selDay:null, date:type==="single"?selDate:null, slots: slots.map(t=>({time:t,booked:false,bookingId:null})) };
+    const entry={ id:crypto.randomUUID(), type, day:type==="weekly"?selDay:null, date:type==="single"?selDate:null, slots: slots.map(t=>({time:t,booked:false,bookingId:null})) };
     setAvailability(p=>[...p,entry]);
+    saveAvailability(entry);
     setModal(false);
   };
-  const delSlot=(avId,time)=>setAvailability(p=>p.map(av=>av.id===avId?{...av,slots:av.slots.filter(s=>s.time!==time)}:av));
-  const delAv=id=>setAvailability(p=>p.filter(av=>av.id!==id));
+  const delSlot=(avId,time)=>{
+    setAvailability(p=>{
+      const updated=p.map(av=>av.id===avId?{...av,slots:av.slots.filter(s=>s.time!==time)}:av);
+      const entry=updated.find(av=>av.id===avId);
+      if(entry) saveAvailability(entry);
+      return updated;
+    });
+  };
+  const delAv=id=>{ setAvailability(p=>p.filter(av=>av.id!==id)); deleteAvailability(id); };
 
   return (
     <>
@@ -4040,7 +4051,7 @@ export default function App() {
         email: authUser.email,
       };
 
-      // Veli ise öğrencisini yükle
+      // Veli ise öğrencisini ve müsait saatleri yükle
       if(profile.role === "parent") {
         try {
           const students = await loadStudents();
@@ -4064,6 +4075,12 @@ export default function App() {
         } catch(e) {
           console.error('[loginUser] failed to load parent students:', e);
           fullUser.child = null;
+        }
+        try {
+          const avail = await loadAvailability();
+          setAvailability(avail);
+        } catch(e) {
+          console.error('[loginUser] failed to load parent availability:', e);
         }
       }
 
@@ -4118,6 +4135,12 @@ export default function App() {
     sb.auth.clearSession();
     setUser(null);
     setAssignments([]);
+    setPool([]);
+    setAvailability([]);
+    setOnlineRequests([]);
+    setSessions([]);
+    setStudents([]);
+    setSubmissions([]);
   };
 
   if(loading) return (
