@@ -312,27 +312,35 @@ function useSupabase() {
     return sb.from("materials").delete(`id=eq.${id}`);
   };
 
-  // Müsait saatler — DB stores one row per slot; app groups them into entries by (type+day_of_week+date)
+  // Müsait saatler — DB stores one row per slot; app groups by (type + day_of_week int + date)
   const loadAvailability = async () => {
     try {
       const data = await sb.from("availability").select("*");
       if (!Array.isArray(data)) return [];
       const map = {};
       for (const row of data) {
-        const key = `${row.type}|${row.day_of_week||""}|${row.date||""}`;
-        if (!map[key]) map[key] = { id: key, type: row.type, day: row.day_of_week||null, date: row.date||null, slots: [] };
+        // key uses the raw integer so it matches the key produced by save()
+        const key = `${row.type}|${row.day_of_week ?? ""}|${row.date||""}`;
+        if (!map[key]) map[key] = {
+          id:   key,
+          type: row.type,
+          day:  row.day_of_week != null ? (INT_TO_DAY[row.day_of_week] || null) : null,
+          date: row.date || null,
+          slots: [],
+        };
         map[key].slots.push({ id: row.id, time: row.time, booked: !row.active, bookingId: null });
       }
       return Object.values(map);
     } catch(e) { return []; }
   };
 
-  // Upserts one DB row per slot (id, type, day_of_week, date, time, active)
+  // Upserts one DB row per slot — day_of_week must be integer
   const saveAvailability = async (entry) => {
+    const dayInt = entry.day != null ? (DAY_TO_INT[entry.day] ?? null) : null;
     const rows = (entry.slots || []).map(s => ({
       id:          s.id,
       type:        entry.type,
-      day_of_week: entry.day  || null,
+      day_of_week: dayInt,
       date:        entry.date || null,
       time:        s.time,
       active:      !s.booked,
@@ -1192,6 +1200,9 @@ function getWordPairs(letter, count = 8, zorluk = null) {
 const DIAGNOSES = ["Artikülasyon Bozukluğu","Dil Gecikmesi","Kekemelik","Ses Bozukluğu","Otizm Spektrum","Down Sendromu","İşitme Kaybı","Afazi","Serebral Palsi","Değerlendirme Aşamasında"];
 const CLASSES   = ["Anaokulu","1. Sınıf","2. Sınıf","3. Sınıf","4. Sınıf","5. Sınıf","6. Sınıf","7. Sınıf","8. Sınıf","Lise","Yetişkin"];
 const DAYS      = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi"];
+// day_of_week column is integer (PostgreSQL convention: 0=Sun,1=Mon…6=Sat)
+const DAY_TO_INT = {"Pazar":0,"Pazartesi":1,"Salı":2,"Çarşamba":3,"Perşembe":4,"Cuma":5,"Cumartesi":6};
+const INT_TO_DAY = {0:"Pazar",1:"Pazartesi",2:"Salı",3:"Çarşamba",4:"Perşembe",5:"Cuma",6:"Cumartesi"};
 
 async function callClaude(prompt, system="SADECE JSON yanıt ver.", maxTokens=900) {
   try {
@@ -2482,8 +2493,8 @@ function AvailabilityManager({ availability, setAvailability }) {
   const save=()=>{
     const slots=generateSlots(startT,endT,interval);
     if(!slots.length) return;
-    // Use a composite key so the same day/date merges on reload from DB
-    const entryId=`${type}|${type==="weekly"?selDay:""}|${type==="single"?selDate:""}`;
+    // Key must use the integer form of the day so it matches keys rebuilt by loadAvailability
+    const entryId=`${type}|${type==="weekly"?(DAY_TO_INT[selDay]??""):""}|${type==="single"?selDate:""}`;
     const newSlots=slots.map(t=>({id:crypto.randomUUID(),time:t,booked:false,bookingId:null}));
     const entry={ id:entryId, type, day:type==="weekly"?selDay:null, date:type==="single"?selDate:null, slots:newSlots };
     setAvailability(p=>{
