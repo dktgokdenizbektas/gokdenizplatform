@@ -288,9 +288,9 @@ function useSupabase() {
       type:        item.type || "pdf",
       file_url:    item.fileUrl || "",
       letter:      item.letter || "",
-      tags:        item.tags || "",
-      notes:       item.notes || "",
-      size:        item.size || "",
+      tags:        Array.isArray(item.tags) ? item.tags : null,
+      notes:       item.notes || null,
+      size:        item.size ? (parseInt(item.size, 10) || null) : null,
       uploaded_at: item.uploadedAt || new Date().toLocaleDateString("tr-TR"),
     };
     console.log('[saveMaterial] saving:', payload);
@@ -312,20 +312,39 @@ function useSupabase() {
     return sb.from("materials").delete(`id=eq.${id}`);
   };
 
-  // Müsait saatler
+  // Müsait saatler — DB stores one row per slot; app groups them into entries by (type+day_of_week+date)
   const loadAvailability = async () => {
     try {
       const data = await sb.from("availability").select("*");
-      return Array.isArray(data) ? data : [];
+      if (!Array.isArray(data)) return [];
+      const map = {};
+      for (const row of data) {
+        const key = `${row.type}|${row.day_of_week||""}|${row.date||""}`;
+        if (!map[key]) map[key] = { id: key, type: row.type, day: row.day_of_week||null, date: row.date||null, slots: [] };
+        map[key].slots.push({ id: row.id, time: row.time, booked: !row.active, bookingId: null });
+      }
+      return Object.values(map);
     } catch(e) { return []; }
   };
 
+  // Upserts one DB row per slot (id, type, day_of_week, date, time, active)
   const saveAvailability = async (entry) => {
-    return sb.from("availability").upsert(entry);
+    const rows = (entry.slots || []).map(s => ({
+      id:          s.id,
+      type:        entry.type,
+      day_of_week: entry.day  || null,
+      date:        entry.date || null,
+      time:        s.time,
+      active:      !s.booked,
+    }));
+    for (const row of rows) {
+      await sb.from("availability").upsert(row);
+    }
   };
 
-  const deleteAvailability = async (id) => {
-    return sb.from("availability").delete(`id=eq.${id}`);
+  // Deletes a single slot row by its DB id
+  const deleteAvailability = async (slotId) => {
+    return sb.from("availability").delete(`id=eq.${slotId}`);
   };
 
   // Seanslar
@@ -2463,20 +2482,35 @@ function AvailabilityManager({ availability, setAvailability }) {
   const save=()=>{
     const slots=generateSlots(startT,endT,interval);
     if(!slots.length) return;
-    const entry={ id:crypto.randomUUID(), type, day:type==="weekly"?selDay:null, date:type==="single"?selDate:null, slots: slots.map(t=>({time:t,booked:false,bookingId:null})) };
-    setAvailability(p=>[...p,entry]);
+    // Use a composite key so the same day/date merges on reload from DB
+    const entryId=`${type}|${type==="weekly"?selDay:""}|${type==="single"?selDate:""}`;
+    const newSlots=slots.map(t=>({id:crypto.randomUUID(),time:t,booked:false,bookingId:null}));
+    const entry={ id:entryId, type, day:type==="weekly"?selDay:null, date:type==="single"?selDate:null, slots:newSlots };
+    setAvailability(p=>{
+      const existing=p.find(av=>av.id===entryId);
+      if(existing) return p.map(av=>av.id===entryId?{...av,slots:[...av.slots,...newSlots]}:av);
+      return [...p,entry];
+    });
     saveAvailability(entry);
     setModal(false);
   };
+  // Delete the specific slot's DB row by its id, then update state
   const delSlot=(avId,time)=>{
     setAvailability(p=>{
-      const updated=p.map(av=>av.id===avId?{...av,slots:av.slots.filter(s=>s.time!==time)}:av);
-      const entry=updated.find(av=>av.id===avId);
-      if(entry) saveAvailability(entry);
-      return updated;
+      const entry=p.find(av=>av.id===avId);
+      const slot=entry?.slots.find(s=>s.time===time);
+      if(slot?.id) deleteAvailability(slot.id);
+      return p.map(av=>av.id===avId?{...av,slots:av.slots.filter(s=>s.time!==time)}:av);
     });
   };
-  const delAv=id=>{ setAvailability(p=>p.filter(av=>av.id!==id)); deleteAvailability(id); };
+  // Delete all slot rows for this entry group, then remove from state
+  const delAv=avId=>{
+    setAvailability(p=>{
+      const entry=p.find(av=>av.id===avId);
+      if(entry) entry.slots.forEach(s=>deleteAvailability(s.id));
+      return p.filter(av=>av.id!==avId);
+    });
+  };
 
   return (
     <>
