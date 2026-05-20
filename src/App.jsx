@@ -4141,7 +4141,7 @@ export default function App() {
   const [onlineRequests, setOnlineRequests] = useState([]);
   const [availability, setAvailability] = useState([]);
   const { loadAssignments, loadStudents, loadProfile,
-          loadMaterials,
+          loadMaterials, loadSubmissions,
           loadRequests, loadAvailability, loadSessions } = useSupabase();
 
   // Oturum kontrolü — sayfa yenilenince tekrar giriş istemez
