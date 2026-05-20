@@ -214,16 +214,13 @@ function useSupabase() {
       custom_words: asgn.customWords,
       ...(asgn.poolItemId ? { pool_item_id: asgn.poolItemId } : {}),
     };
-    console.log('[saveAssignment] inserting payload:', payload);
     try {
       const result = await sb.from("assignments").insert(payload);
-      console.log('[saveAssignment] raw result:', result);
       if(Array.isArray(result) && result[0]?.code) {
-        console.error('[saveAssignment] Supabase error:', result[0]);
+        setError(result[0].message);
       }
       return Array.isArray(result) ? result[0] : null;
     } catch(e) {
-      console.error('[saveAssignment] caught exception:', e);
       setError(e);
       return null;
     } finally { setLoading(false); }
@@ -237,6 +234,11 @@ function useSupabase() {
   // Teslim kaydet (fotoğraf/ses)
   const saveSubmission = async (sub) => {
     return sb.from("submissions").insert(sub);
+  };
+
+  // Teslim güncelle
+  const updateSubmission = async (id, data) => {
+    return sb.from("submissions").update(data, `id=eq.${id}`);
   };
 
   // Teslim sil
@@ -272,11 +274,9 @@ function useSupabase() {
   const loadMaterials = async () => {
     try {
       const data = await sb.from("materials").select("*");
-      console.log('[loadMaterials]:', Array.isArray(data) ? `${data.length} items` : data);
-      if(!Array.isArray(data)) { console.error('[loadMaterials] error:', data); return []; }
+      if(!Array.isArray(data)) return [];
       return data.map(m => ({ ...m, fileUrl: m.file_url }));
     } catch(e) {
-      console.error('[loadMaterials] exception:', e);
       return [];
     }
   };
@@ -293,17 +293,10 @@ function useSupabase() {
       size:        item.size ? (parseInt(item.size, 10) || null) : null,
       uploaded_at: item.uploadedAt || new Date().toISOString().slice(0, 10),
     };
-    console.log('[saveMaterial] saving:', payload);
     try {
       const result = await sb.from("materials").upsert(payload);
-      if(Array.isArray(result) && result[0]?.code) {
-        console.error('[saveMaterial] Supabase error:', result[0]);
-      } else {
-        console.log('[saveMaterial] saved OK:', result?.[0]?.id || item.id);
-      }
       return result;
     } catch(e) {
-      console.error('[saveMaterial] exception:', e);
       return null;
     }
   };
@@ -365,6 +358,40 @@ function useSupabase() {
     return sb.from("sessions").insert(session);
   };
 
+  const updateSession = async (id, data) => {
+    return sb.from("sessions").update(data, `id=eq.${id}`);
+  };
+
+  const deleteSession = async (id) => {
+    return sb.from("sessions").delete(`id=eq.${id}`);
+  };
+
+  // Teslimler
+  const loadSubmissions = async () => {
+    try {
+      const data = await sb.from("submissions").select("*");
+      if(!Array.isArray(data)) return [];
+      return data.map(s => ({
+        ...s,
+        childId:    s.student_id,
+        asgnId:     s.assignment_id,
+        photo:      s.photo_url,
+        audio:      s.audio_url,
+        date:       s.created_at ? s.created_at.slice(0,10) : "",
+      }));
+    } catch(e) { return []; }
+  };
+
+  const uploadSubmissionAudio = async (dataUrl, assignmentId) => {
+    if(!dataUrl) return null;
+    try {
+      const resp = await fetch(dataUrl);
+      const blob = await resp.blob();
+      const path = `${assignmentId}/${Date.now()}.webm`;
+      return sb.storage.upload("submissions", path, blob, "audio/webm");
+    } catch(e) { return null; }
+  };
+
   // Avatar yükle (sıkıştırılmış)
   const uploadAvatar = async (file, uid) => {
     const compressed = await compressImage(file, 300, 0.75, 100);
@@ -383,12 +410,13 @@ function useSupabase() {
     loading, error,
     loadAssignments, loadStudents, loadProfile,
     saveAssignment, updateAssignment,
-    saveSubmission, deleteSubmission,
+    saveSubmission, updateSubmission, deleteSubmission,
+    loadSubmissions, uploadSubmissionAudio,
     upsertProfile, saveStudent,
     loadMaterials, saveMaterial, deleteMaterial,
     loadRequests, saveRequest, updateRequest,
     loadAvailability, saveAvailability, deleteAvailability,
-    loadSessions, saveSession,
+    loadSessions, saveSession, updateSession, deleteSession,
     uploadAvatar, uploadSubmissionPhoto,
   };
 }
@@ -1795,7 +1823,6 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
       }
       await onLogin(d.user, d.access_token);
     } catch(e) {
-      console.error('login error:', e);
       setErr("Bağlantı hatası. Lütfen tekrar deneyin.");
     } finally {
       setLoading2(false);
@@ -1827,36 +1854,28 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
     if(!newUser) return;
     setLoading2(true);
     try {
-      console.log('[onboardComplete] starting signIn for', newUser.email);
       const d = await sb.auth.signIn(newUser.email, rPass);
-      console.log('[onboardComplete] signIn result:', { access_token: d.access_token ? d.access_token.slice(0,20)+'...' : null, userId: d.user?.id, error: d.error });
       if(!d.access_token) { setErr("Giriş yapılamadı."); return; }
 
-      console.log('[onboardComplete] upserting profile for user', d.user.id);
-      const profileRes = await sb.from("profiles").upsert({
+      await sb.from("profiles").upsert({
         id:    d.user.id,
         role:  "parent",
         name:  newUser.name,
         email: newUser.email,
         phone: newUser.phone || "",
       });
-      console.log('[onboardComplete] profile upsert result:', profileRes);
 
-      const studentPayload = {
+      await sb.from("students").insert({
         parent_id: d.user.id,
         name:      child.name,
         age:       parseInt(child.age)||0,
         class:     child.class||"",
         diagnosis: child.diagnosis||"",
         notes:     child.notes||"",
-      };
-      console.log('[onboardComplete] inserting student:', studentPayload);
-      const studentRes = await sb.from("students").insert(studentPayload);
-      console.log('[onboardComplete] student insert result:', studentRes);
+      });
 
       await onLogin(d.user, d.access_token);
     } catch(e) {
-      console.error('[onboardComplete] caught error:', e);
       setErr("Hata oluştu.");
     } finally { setLoading2(false); }
   };
@@ -2071,9 +2090,7 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
   };
 
   const handleSaveAssignment = async (a) => {
-    console.log('[handleSaveAssignment] called with:', a);
     const saved = await saveAssignment(a);
-    console.log('[handleSaveAssignment] saveAssignment returned:', saved);
     const finalId = saved?.id || a.id;
     setAssignments(p => [...p, { ...a, id: finalId }]);
     setModal(false);
@@ -2182,7 +2199,7 @@ function EDash({ assignments, allC, getProg, sessions, pendingSubmissions, pendi
 
 // ─── SESSION CALENDAR ──────────────────────────────────────────────────────────
 function SessionCalendar({ sessions, setSessions, allC, assignments, setAssignments }) {
-  const [cur,setCur]=useState(new Date(2026,3,1));
+  const [cur,setCur]=useState(new Date());
   const [editSess,setEdit]=useState(null);
   const [modal,setModal]=useState(false);
   const [selDate,setSelDate]=useState(null);
@@ -2197,8 +2214,32 @@ function SessionCalendar({ sessions, setSessions, allC, assignments, setAssignme
   const DOW=["Pzt","Sal","Çar","Per","Cum","Cmt","Paz"];
   const ds=d=>`${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
   const csess=d=>sessions.filter(s=>s.date===d);
-  const save=s=>{ if(s.id) setSessions(p=>p.map(x=>x.id===s.id?s:x)); else setSessions(p=>[...p,{...s,id:"s"+Date.now(),notified:false}]); setModal(false);setEdit(null); };
-  const del=id=>setSessions(p=>p.filter(s=>s.id!==id));
+  const { saveSession, updateSession, deleteSession } = useSupabase();
+  const save=async s=>{
+    const dbPayload = {
+      student_id: s.childId,
+      date:       s.date,
+      time:       s.time,
+      duration:   s.duration,
+      notes:      s.note || null,
+      type:       s.online ? "online" : "in-person",
+      notified:   s.notified || false,
+    };
+    if(s.id && !s.id.startsWith("s")) {
+      updateSession(s.id, dbPayload);
+      setSessions(p=>p.map(x=>x.id===s.id?{...s}:x));
+    } else if(s.id && s.id.startsWith("s")) {
+      const saved = await saveSession(dbPayload);
+      const newId = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : s.id;
+      setSessions(p=>p.map(x=>x.id===s.id?{...s,id:newId}:x));
+    } else {
+      const saved = await saveSession(dbPayload);
+      const newId = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("s"+Date.now());
+      setSessions(p=>[...p,{...s,id:newId,notified:false}]);
+    }
+    setModal(false);setEdit(null);
+  };
+  const del=id=>{ deleteSession(id); setSessions(p=>p.filter(s=>s.id!==id)); };
   return (
     <>
       <div className="cal-nav"><button className="btn btn-ghost btn-sm" onClick={()=>setCur(new Date(year,month-1,1))}>← Önceki</button><div className="cal-nav-title">{MO[month]} {year}</div><button className="btn btn-ghost btn-sm" onClick={()=>setCur(new Date(year,month+1,1))}>Sonraki →</button></div>
@@ -2234,7 +2275,7 @@ function SessionCalendar({ sessions, setSessions, allC, assignments, setAssignme
 }
 function SessionModal({ session, date, allC, onClose, onSave, onDelete }) {
   const [cid,setCid]=useState(session?.childId||""); const [d,setD]=useState(session?.date||date||"");
-  const [time,setTime]=useState(session?.time||"09:00"); const [dur,setDur]=useState(session?.duration||45); const [note,setNote]=useState(session?.note||"");
+  const [time,setTime]=useState(session?.time||"09:00"); const [dur,setDur]=useState(session?.duration||45); const [note,setNote]=useState(session?.note||session?.notes||"");
   return (
     <div className="mov" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="mbox">
@@ -2421,8 +2462,9 @@ function AssignPreviewModal({ asgn, pool, onClose, onApprove }) {
 // ─── SUBMISSION INBOX ──────────────────────────────────────────────────────────
 function SubmissionInbox({ submissions, setSubmissions, assignments, allC }) {
   const [sel,setSel]=useState(null);
-  const mark=(id,reviewed)=>setSubmissions(p=>p.map(s=>s.id===id?{...s,reviewed}:s));
-  const del=id=>setSubmissions(p=>p.filter(s=>s.id!==id));
+  const { updateSubmission, deleteSubmission } = useSupabase();
+  const mark=(id,reviewed)=>{ updateSubmission(id, {reviewed}); setSubmissions(p=>p.map(s=>s.id===id?{...s,reviewed}:s)); };
+  const del=id=>{ deleteSubmission(id); setSubmissions(p=>p.filter(s=>s.id!==id)); };
   const unreviewed=submissions.filter(s=>!s.reviewed);
   const reviewed=submissions.filter(s=>s.reviewed);
   return (
@@ -2576,11 +2618,24 @@ function AvailabilityManager({ availability, setAvailability }) {
 function OnlineRequestsExpert({ requests, setRequests, allC, sessions, setSessions, showNotif }) {
   const pending=requests.filter(r=>r.status==="bekliyor");
   const approved=requests.filter(r=>r.status==="onaylandı");
-  const respond=(id,status,note)=>{
+  const { updateRequest, saveSession } = useSupabase();
+  const respond=async(id,status,note)=>{
+    updateRequest(id, { status, expert_note: note || null });
     setRequests(p=>p.map(r=>r.id===id?{...r,status,expertNote:note}:r));
     if(status==="onaylandı"){
       const r=requests.find(x=>x.id===id);
-      setSessions(p=>[...p,{id:"s"+Date.now(),childId:r.childId,date:r.requestedDate,time:r.requestedTime,duration:50,note:"Online Değerlendirme Seansı",online:true,notified:false}]);
+      const dbSession = {
+        student_id: r.childId,
+        date:       r.requestedDate,
+        time:       r.requestedTime,
+        duration:   50,
+        notes:      "Online Değerlendirme Seansı",
+        type:       "online",
+        notified:   false,
+      };
+      const saved = await saveSession(dbSession);
+      const sid = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("s"+Date.now());
+      setSessions(p=>[...p,{...dbSession, id:sid, childId:r.childId, note:dbSession.notes, online:true}]);
       showNotif("Seans onaylandı ve takvime eklendi!");
     }
   };
@@ -2798,18 +2853,19 @@ function PTasks({ myA, startGame, pool, submissions, setSubmissions, child, assi
           </div>
         </div>
       ))}
-      {submitModal&&<SubmissionModal asgn={submitModal} child={child} onClose={()=>setSubmitModal(null)} onSubmit={sub=>{setSubmissions(p=>[...p,sub]);setSubmitModal(null);}}/>}
+      {submitModal&&<SubmissionModal asgn={submitModal} child={child} onClose={()=>setSubmitModal(null)} onSubmit={sub=>{setSubmissions(p=>[...p,sub]);setSubmitModal(null);}} setSubmissions={setSubmissions}/>}
     </>
   );
 }
 
-function SubmissionModal({ asgn, child, onClose, onSubmit }) {
+function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
   const [photo,setPhoto]=useState(null);
   const [audio,setAudio]=useState(null);
   const [note,setNote]=useState("");
   const [recording,setRecording]=useState(false);
   const [recorder,setRecorder]=useState(null);
   const photoRef=useRef();
+  const { saveSubmission, uploadSubmissionPhoto, uploadSubmissionAudio } = useSupabase();
 
   const handlePhoto=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>setPhoto(ev.target.result); r.readAsDataURL(f); };
 
@@ -2818,9 +2874,30 @@ function SubmissionModal({ asgn, child, onClose, onSubmit }) {
   };
   const stopRec=()=>{ recorder?.stop(); setRecording(false); };
 
-  const submit=()=>{
+  const submit=async()=>{
     if(!photo&&!audio) return;
-    onSubmit({id:"sub"+Date.now(),childId:child.id,asgnId:asgn.id,asgnTitle:asgn.title,photo,audio,note,date:new Date().toLocaleDateString("tr-TR"),reviewed:false});
+    let photoUrl = null;
+    let audioUrl = null;
+    if(photo) {
+      const resp = await fetch(photo);
+      const blob = await resp.blob();
+      photoUrl = await uploadSubmissionPhoto(blob, asgn.id) || photo;
+    }
+    if(audio) {
+      audioUrl = await uploadSubmissionAudio(audio, asgn.id) || null;
+    }
+    const dbPayload = {
+      student_id:    child.id,
+      assignment_id: asgn.id,
+      photo_url:     photoUrl,
+      audio_url:     audioUrl,
+      note:          note || null,
+      reviewed:      false,
+    };
+    const saved = await saveSubmission(dbPayload);
+    const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("sub"+Date.now());
+    const date = new Date().toISOString().slice(0,10);
+    onSubmit({ id, childId:child.id, asgnId:asgn.id, asgnTitle:asgn.title, photo:photoUrl||photo, audio:audioUrl||audio, note, date, reviewed:false });
   };
 
   return (
@@ -2871,10 +2948,27 @@ function OnlineBooking({ child, availability, requests, setRequests }) {
   const [reason,setReason]=useState("");
   const [note,setNote]=useState("");
   const [submitted,setSubmitted]=useState(false);
+  const { saveRequest } = useSupabase();
 
-  const submit=()=>{
+  const submit=async()=>{
     if(!selSlot) return;
-    setRequests(p=>[...p,{id:"or"+Date.now(),childId:child.id,requestedDate:selSlot.date||selSlot.day,requestedTime:selSlot.time,reason,parentNote:note,status:"bekliyor",createdAt:new Date().toISOString().slice(0,10)}]);
+    const slotDate = selSlot.date || selSlot.day || "";
+    const dbPayload = {
+      student_id:  child.id,
+      parent_id:   child.parent_id,
+      slot_date:   slotDate,
+      slot_time:   selSlot.time,
+      reason:      reason || null,
+      status:      "bekliyor",
+    };
+    const saved = await saveRequest(dbPayload);
+    const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("or"+Date.now());
+    setRequests(p=>[...p,{
+      id, student_id:child.id, parent_id:child.parent_id,
+      slot_date:slotDate, slot_time:selSlot.time,
+      reason, status:"bekliyor",
+      childId:child.id, requestedDate:slotDate, requestedTime:selSlot.time, expertNote:null,
+    }]);
     setSubmitted(true);
   };
 
@@ -4074,7 +4168,6 @@ export default function App() {
   }, []);
 
   const loginUser = async (authUser, token) => {
-    console.log('[loginUser] token:', token ? token.slice(0, 20) + '...' : 'MISSING');
     try {
       sb.auth.setSession({ access_token: token, user: authUser, expires_at: Date.now()/1000 + 3600 });
       let profile = await loadProfile(authUser.id);
@@ -4096,46 +4189,58 @@ export default function App() {
         email: authUser.email,
       };
 
+      const transformAssignment = a => ({
+        ...a, childId: a.student_id, dueDate: a.due_date,
+        customWords: Array.isArray(a.custom_words) ? a.custom_words : [],
+        poolItemId: a.pool_item_id,
+        fileUrl: (!Array.isArray(a.custom_words) && a.custom_words?.pdfUrl) ? a.custom_words.pdfUrl : "",
+      });
+
+      const transformRequest = r => ({
+        ...r,
+        childId:       r.student_id,
+        requestedDate: r.slot_date,
+        requestedTime: r.slot_time,
+        expertNote:    r.expert_note,
+      });
+
+      const transformSession = s => ({
+        ...s,
+        childId: s.student_id,
+        note:    s.notes,
+        online:  s.type === "online",
+      });
+
       // Veli ise öğrencisini ve müsait saatleri yükle
       if(profile.role === "parent") {
         try {
           const students = await loadStudents();
-          console.log('[loginUser:parent] all students from DB:', students);
           const myStudent = students.find(s => s.parent_id === authUser.id);
-          console.log('[loginUser:parent] student matched for user', authUser.id, ':', myStudent);
           if(myStudent) {
             fullUser.child = myStudent;
-            console.log('[loginUser:parent] fetching assignments for student_id:', myStudent.id);
             const asgns = await loadAssignments([myStudent.id]);
-            console.log('[loginUser:parent] assignments result:', asgns);
-            setAssignments(asgns.map(a => ({
-              ...a, childId: a.student_id, dueDate: a.due_date,
-              customWords: Array.isArray(a.custom_words) ? a.custom_words : [],
-              poolItemId: a.pool_item_id,
-              fileUrl: (!Array.isArray(a.custom_words) && a.custom_words?.pdfUrl) ? a.custom_words.pdfUrl : "",
-            })));
+            setAssignments(asgns.map(transformAssignment));
           } else {
             fullUser.child = null;
           }
         } catch(e) {
-          console.error('[loginUser] failed to load parent students:', e);
           fullUser.child = null;
         }
         try {
-          const avail = await loadAvailability();
+          const [avail, reqs, subs] = await Promise.all([
+            loadAvailability(), loadRequests(), loadSubmissions(),
+          ]);
           setAvailability(avail);
-        } catch(e) {
-          console.error('[loginUser] failed to load parent availability:', e);
-        }
+          setOnlineRequests(reqs.filter(r => r.student_id === fullUser.child?.id).map(transformRequest));
+          setSubmissions(subs.filter(s => s.student_id === fullUser.child?.id));
+        } catch(e) {}
       }
 
       // Materyalleri her iki rol için yükle
       try {
         const materials = await loadMaterials();
         setPool(materials);
-      } catch(e) {
-        console.error('[loginUser] failed to load materials:', e);
-      }
+      } catch(e) {}
 
       // Uzman ise hepsini yükle
       if(profile.role === "expert") {
@@ -4145,31 +4250,22 @@ export default function App() {
           const ids = students.map(s => s.id);
           if(ids.length) {
             const asgns = await loadAssignments(ids);
-            setAssignments(asgns.map(a => ({
-              ...a, childId: a.student_id, dueDate: a.due_date,
-              customWords: Array.isArray(a.custom_words) ? a.custom_words : [],
-              poolItemId: a.pool_item_id,
-              fileUrl: (!Array.isArray(a.custom_words) && a.custom_words?.pdfUrl) ? a.custom_words.pdfUrl : "",
-            })));
+            setAssignments(asgns.map(transformAssignment));
           }
-        } catch(e) {
-          console.error('[loginUser] failed to load expert students:', e);
-        }
+        } catch(e) {}
         try {
-          const [reqs, avail, sess] = await Promise.all([
-            loadRequests(), loadAvailability(), loadSessions(),
+          const [reqs, avail, sess, subs] = await Promise.all([
+            loadRequests(), loadAvailability(), loadSessions(), loadSubmissions(),
           ]);
-          setOnlineRequests(reqs);
+          setOnlineRequests(reqs.map(transformRequest));
           setAvailability(avail);
-          setSessions(sess.map(s => ({ ...s, childId: s.student_id })));
-        } catch(e) {
-          console.error('[loginUser] failed to load expert sessions/requests:', e);
-        }
+          setSessions(sess.map(transformSession));
+          setSubmissions(subs);
+        } catch(e) {}
       }
 
       setUser(fullUser);
     } catch(e) {
-      console.error('[loginUser] unexpected error:', e);
     } finally {
       setLoading(false);
     }
