@@ -400,12 +400,7 @@ function useSupabase() {
 
   const uploadSubmissionAudio = async (dataUrl, assignmentId) => {
     if(!dataUrl) return null;
-    try {
-      const resp = await fetch(dataUrl);
-      const blob = await resp.blob();
-      const path = `${assignmentId}/${Date.now()}.webm`;
-      return sb.storage.upload("submissions", path, blob, "audio/webm");
-    } catch(e) { return null; }
+    return dataUrl; // Store base64 data URL directly — storage bucket is not public
   };
 
   // Avatar yükle (sıkıştırılmış)
@@ -415,17 +410,27 @@ function useSupabase() {
     return sb.storage.upload("avatars", path, compressed, "image/jpeg");
   };
 
-  // Teslim fotoğrafı yükle
+  // Teslim fotoğrafı yükle — base64 olarak kaydet (storage bucket public değil)
   const uploadSubmissionPhoto = async (file, assignmentId) => {
-    const compressed = await compressImage(file, 800, 0.80, 200);
-    const path = `${assignmentId}/${Date.now()}.jpg`;
-    return sb.storage.upload("submissions", path, compressed, "image/jpeg");
+    try {
+      const compressed = await compressImage(file, 500, 0.72, 80);
+      return new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(compressed);
+      });
+    } catch(e) { return null; }
+  };
+
+  const deleteAssignment = async (id) => {
+    return sb.from("assignments").delete(`id=eq.${id}`);
   };
 
   return {
     loading, error,
     loadAssignments, loadStudents, loadProfile,
-    saveAssignment, updateAssignment,
+    saveAssignment, updateAssignment, deleteAssignment,
     saveSubmission, updateSubmission, deleteSubmission,
     loadSubmissions, uploadSubmissionAudio,
     upsertProfile, saveStudent,
@@ -2386,7 +2391,7 @@ function StuDetail({ child, asgns, submissions, onBack, onAssign, onApprove }) {
       {mySubs.length>0&&<><div className="sectitle mt4">Teslim Edilen Ödevler ({mySubs.length})</div>{mySubs.map(s=>(
         <div key={s.id} className="sub-card">
           <div className="flex ic jb mb2"><span className="tsm bold">{s.asgnTitle||"Ödev"}</span><span className="txs muted">{s.date}</span></div>
-          {s.photo&&<img src={s.photo} alt="teslim" className="sub-img" style={{height:100}}/>}
+          {s.photo&&<img src={s.photo} alt="teslim" className="sub-img" style={{height:100}} onError={e=>e.target.style.display='none'}/>}
           {s.note&&<div className="txs muted mt2">{s.note}</div>}
         </div>
       ))}</>}
@@ -2397,7 +2402,9 @@ function StuDetail({ child, asgns, submissions, onBack, onAssign, onApprove }) {
 // ─── ALL TASKS ─────────────────────────────────────────────────────────────────
 function AllTasks({ assignments, setAssignments, allC, onPreview, pool, onApprove }) {
   const [tab,setTab]=useState("all");
+  const { deleteAssignment } = useSupabase();
   const fil=tab==="all"?assignments:assignments.filter(a=>a.status===tab);
+  const handleDelete=async id=>{ try { await deleteAssignment(id); } catch(e) { console.error("Ödev silinemedi:", e); } setAssignments(p=>p.filter(x=>x.id!==id)); };
   return (
     <>
       <div className="tabs">{[["all","Tümü"],["onay bekliyor","Onay Bekliyor"],["bekliyor","Bekliyor"],["tamamlandı","Tamamlandı"]].map(([v,l])=><button key={v} className={`tab ${tab===v?"on":""}`} onClick={()=>setTab(v)}>{l}</button>)}</div>
@@ -2412,7 +2419,7 @@ function AllTasks({ assignments, setAssignments, allC, onPreview, pool, onApprov
             <td><div className="flex g1">
               <button className="btn btn-ghost btn-xs" onClick={()=>onPreview(a)}>{IC.eye}</button>
               {a.status==="onay bekliyor"&&<button className="btn btn-success btn-xs" onClick={()=>onApprove(a.id)}>Onayla</button>}
-              <button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>setAssignments(p=>p.filter(x=>x.id!==a.id))}>{IC.trash}</button>
+              <button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>handleDelete(a.id)}>{IC.trash}</button>
             </div></td>
           </tr>);
         })}</tbody>
@@ -2926,8 +2933,8 @@ function PTasks({ myA, startGame, pool, submissions, setSubmissions, child, assi
           <div className="flex ic g2">
             <SBadge s={a.status}/>
             {a.game!=="pdf"&&<button className="btn btn-gold btn-sm" onClick={()=>startGame(a)}>{a.status==="tamamlandı"?"Tekrar Oyna":"Oyna"}</button>}
-            {a.game!=="pdf"&&<button className="btn btn-ghost btn-sm" onClick={()=>setSubmitModal(a)} title="Fotoğraflı Teslim">{IC.img}</button>}
             {a.game==="pdf"&&(a.fileUrl ? <a href={a.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-gold btn-sm">PDF Görüntüle</a> : <span className="txs muted">PDF bekleniyor...</span>)}
+            {a.game==="pdf"&&<button className="btn btn-ghost btn-sm" onClick={()=>setSubmitModal(a)} title="Fotoğraf/Ses Teslimi">{IC.img}</button>}
             {a.score!=null&&<span className="badge bn">{a.score}</span>}
           </div>
         </div>
@@ -2943,6 +2950,8 @@ function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
   const [note,setNote]=useState("");
   const [recording,setRecording]=useState(false);
   const [recorder,setRecorder]=useState(null);
+  const [submitting,setSubmitting]=useState(false);
+  const [submitError,setSubmitError]=useState(null);
   const photoRef=useRef();
   const { saveSubmission, uploadSubmissionPhoto, uploadSubmissionAudio } = useSupabase();
 
@@ -2955,28 +2964,36 @@ function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
 
   const submit=async()=>{
     if(!photo&&!audio) return;
-    let photoUrl = null;
-    let audioUrl = null;
-    if(photo) {
-      const resp = await fetch(photo);
-      const blob = await resp.blob();
-      photoUrl = await uploadSubmissionPhoto(blob, asgn.id) || photo;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      let photoUrl = null;
+      let audioUrl = null;
+      if(photo) {
+        const resp = await fetch(photo);
+        const blob = await resp.blob();
+        photoUrl = await uploadSubmissionPhoto(blob, asgn.id) || photo;
+      }
+      if(audio) {
+        audioUrl = await uploadSubmissionAudio(audio, asgn.id) || audio;
+      }
+      const dbPayload = {
+        student_id:    child.id,
+        assignment_id: asgn.id,
+        photo_url:     photoUrl,
+        audio_url:     audioUrl,
+        note:          note || null,
+        reviewed:      false,
+      };
+      const saved = await saveSubmission(dbPayload);
+      const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("sub"+Date.now());
+      const date = new Date().toISOString().slice(0,10);
+      onSubmit({ id, childId:child.id, asgnId:asgn.id, asgnTitle:asgn.title, photo:photoUrl||photo, audio:audioUrl||audio, note, date, reviewed:false });
+    } catch(e) {
+      setSubmitError(`Teslim başarısız: ${e.message}`);
+    } finally {
+      setSubmitting(false);
     }
-    if(audio) {
-      audioUrl = await uploadSubmissionAudio(audio, asgn.id) || null;
-    }
-    const dbPayload = {
-      student_id:    child.id,
-      assignment_id: asgn.id,
-      photo_url:     photoUrl,
-      audio_url:     audioUrl,
-      note:          note || null,
-      reviewed:      false,
-    };
-    const saved = await saveSubmission(dbPayload);
-    const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("sub"+Date.now());
-    const date = new Date().toISOString().slice(0,10);
-    onSubmit({ id, childId:child.id, asgnId:asgn.id, asgnTitle:asgn.title, photo:photoUrl||photo, audio:audioUrl||audio, note, date, reviewed:false });
   };
 
   return (
@@ -3004,8 +3021,9 @@ function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
         </div>
 
         <div className="f-group"><label className="f-label">Not (opsiyonel)</label><textarea className="f-textarea" style={{minHeight:60}} value={note} onChange={e=>setNote(e.target.value)} placeholder="Zorluk yaşadığı yerler, gözlemleriniz..."/></div>
+        {submitError&&<div style={{background:"rgba(220,53,69,.12)",border:"1px solid rgba(220,53,69,.3)",borderRadius:9,padding:"10px 14px",marginBottom:12,color:"#E9784B",fontSize:12}}>⚠ {submitError}</div>}
         <div className="f-divider"/>
-        <div className="flex g2"><button className="btn btn-ghost fw" onClick={onClose}>İptal</button><button className="btn btn-gold fw" onClick={submit} disabled={!photo&&!audio}>Teslim Et</button></div>
+        <div className="flex g2"><button className="btn btn-ghost fw" onClick={onClose} disabled={submitting}>İptal</button><button className="btn btn-gold fw" onClick={submit} disabled={(!photo&&!audio)||submitting}>{submitting?"Kaydediliyor...":"Teslim Et"}</button></div>
       </div>
     </div>
   );
@@ -3027,28 +3045,38 @@ function OnlineBooking({ child, availability, requests, setRequests }) {
   const [reason,setReason]=useState("");
   const [note,setNote]=useState("");
   const [submitted,setSubmitted]=useState(false);
+  const [submitting,setSubmitting]=useState(false);
+  const [submitError,setSubmitError]=useState(null);
   const { saveRequest } = useSupabase();
 
   const submit=async()=>{
     if(!selSlot) return;
-    const slotDate = selSlot.date || selSlot.day || "";
-    const dbPayload = {
-      student_id:  child.id,
-      parent_id:   child.parent_id,
-      slot_date:   slotDate,
-      slot_time:   selSlot.time,
-      reason:      reason || null,
-      status:      "bekliyor",
-    };
-    const saved = await saveRequest(dbPayload);
-    const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("or"+Date.now());
-    setRequests(p=>[...p,{
-      id, student_id:child.id, parent_id:child.parent_id,
-      slot_date:slotDate, slot_time:selSlot.time,
-      reason, status:"bekliyor",
-      childId:child.id, requestedDate:slotDate, requestedTime:selSlot.time, expertNote:null,
-    }]);
-    setSubmitted(true);
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const slotDate = selSlot.date || selSlot.day || "";
+      const dbPayload = {
+        student_id:  child.id,
+        parent_id:   child.parent_id,
+        slot_date:   slotDate,
+        slot_time:   selSlot.time,
+        reason:      reason || null,
+        status:      "bekliyor",
+      };
+      const saved = await saveRequest(dbPayload);
+      const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("or"+Date.now());
+      setRequests(p=>[...p,{
+        id, student_id:child.id, parent_id:child.parent_id,
+        slot_date:slotDate, slot_time:selSlot.time,
+        reason, status:"bekliyor",
+        childId:child.id, requestedDate:slotDate, requestedTime:selSlot.time, expertNote:null,
+      }]);
+      setSubmitted(true);
+    } catch(e) {
+      setSubmitError(`Talep gönderilemedi: ${e.message}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if(submitted) return (
@@ -3095,7 +3123,8 @@ function OnlineBooking({ child, availability, requests, setRequests }) {
         </div>
         <div className="f-group"><label className="f-label">Başvuru Nedeni *</label><select className="f-select" value={reason} onChange={e=>setReason(e.target.value)}><option value="">Seçin...</option>{DIAGNOSES.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
         <div className="f-group"><label className="f-label">Ek Not</label><textarea className="f-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="Eklemek istediğiniz bilgiler..."/></div>
-        <button className="btn btn-gold btn-fw" onClick={submit} disabled={!reason}>Online Seans Başvurusu Oluştur</button>
+        {submitError&&<div style={{background:"rgba(220,53,69,.12)",border:"1px solid rgba(220,53,69,.3)",borderRadius:9,padding:"10px 14px",marginBottom:12,color:"#E9784B",fontSize:12}}>⚠ {submitError}</div>}
+        <button className="btn btn-gold btn-fw" onClick={submit} disabled={!reason||submitting}>{submitting?"Gönderiliyor...":"Talep Gönder"}</button>
       </>}
     </>
   );
