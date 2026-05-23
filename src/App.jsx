@@ -88,27 +88,37 @@ const sb = (() => {
     return {
       async select(cols = "*", filters = "") {
         const r = await fetch(`${base}?select=${cols}${filters ? "&" + filters : ""}`, { headers: h() });
-        return r.json();
+        const d = await r.json();
+        if(!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+        return d;
       },
       async insert(data) {
         const r = await fetch(base, {
           method:"POST", headers: h(),
           body: JSON.stringify(data),
         });
-        return r.json();
+        const d = await r.json();
+        if(!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+        return d;
       },
       async update(data, filter) {
         const r = await fetch(`${base}?${filter}`, {
           method:"PATCH", headers: h(),
           body: JSON.stringify(data),
         });
-        return r.json();
+        const d = await r.json();
+        if(!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+        return d;
       },
       async delete(filter) {
         const r = await fetch(`${base}?${filter}`, {
           method:"DELETE", headers: h(),
         });
-        return r.ok;
+        if(!r.ok) {
+          const d = await r.json().catch(()=>({}));
+          throw new Error(d?.message || `HTTP ${r.status}`);
+        }
+        return true;
       },
       async upsert(data) {
         const r = await fetch(base, {
@@ -116,7 +126,9 @@ const sb = (() => {
           headers: { ...h(), "Prefer": "resolution=merge-duplicates,return=representation" },
           body: JSON.stringify(data),
         });
-        return r.json();
+        const d = await r.json();
+        if(!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+        return d;
       },
     };
   };
@@ -258,8 +270,11 @@ function useSupabase() {
 
   // Seans talepleri
   const loadRequests = async () => {
-    const data = await sb.from("session_requests").select("*");
-    return Array.isArray(data) ? data : [];
+    try {
+      return await sb.from("session_requests").select("*");
+    } catch(e) {
+      throw new Error(`Seans talepleri yüklenemedi: ${e.message}`);
+    }
   };
 
   const saveRequest = async (req) => {
@@ -370,7 +385,6 @@ function useSupabase() {
   const loadSubmissions = async () => {
     try {
       const data = await sb.from("submissions").select("*");
-      if(!Array.isArray(data)) return [];
       return data.map(s => ({
         ...s,
         childId:    s.student_id,
@@ -379,7 +393,9 @@ function useSupabase() {
         audio:      s.audio_url,
         date:       s.created_at ? s.created_at.slice(0,10) : "",
       }));
-    } catch(e) { return []; }
+    } catch(e) {
+      throw new Error(`Teslimler yüklenemedi: ${e.message}`);
+    }
   };
 
   const uploadSubmissionAudio = async (dataUrl, assignmentId) => {
@@ -2076,7 +2092,9 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
   const [notif,setNotif]=useState("");
   const [prevAsgn,setPrevAsgn]=useState(null);
   const [sbOpen,setSbOpen]=useState(false);
-  const { saveAssignment, updateAssignment } = useSupabase();
+  const [refreshError,setRefreshError]=useState(null);
+  const [isRefreshing,setIsRefreshing]=useState(false);
+  const { saveAssignment, updateAssignment, loadRequests, loadSubmissions, loadSessions, loadAssignments } = useSupabase();
 
   const allC=students||[];
   const getA=cid=>assignments.filter(a=>a.childId===cid);
@@ -2097,11 +2115,42 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
     showNotif(`"${a.title}" oluşturuldu`);
   };
 
+  const refreshData = useCallback(async (silent=true) => {
+    if(!silent) setIsRefreshing(true);
+    try {
+      const trReq = r => ({ ...r, childId:r.student_id, requestedDate:r.slot_date, requestedTime:r.slot_time, expertNote:r.expert_note });
+      const trSess = s => ({ ...s, childId:s.student_id, note:s.notes, online:s.type==="online" });
+      const [reqs, subs, sess] = await Promise.all([loadRequests(), loadSubmissions(), loadSessions()]);
+      setOnlineRequests(reqs.map(trReq));
+      setSubmissions(subs);
+      setSessions(sess.map(trSess));
+      // Refresh assignments if students exist
+      if(students?.length) {
+        const ids = students.map(s => s.id);
+        const trAsgn = a => ({ ...a, childId:a.student_id, dueDate:a.due_date, customWords:Array.isArray(a.custom_words)?a.custom_words:[], poolItemId:a.pool_item_id });
+        const asgns = await loadAssignments(ids);
+        setAssignments(asgns.map(trAsgn));
+      }
+      setRefreshError(null);
+      if(!silent) showNotif("Veriler güncellendi");
+    } catch(e) {
+      setRefreshError(e.message);
+      if(!silent) showNotif(`Güncelleme hatası: ${e.message}`);
+    } finally {
+      if(!silent) setIsRefreshing(false);
+    }
+  }, [students]);
+
   useEffect(()=>{
     const tmr=new Date(Date.now()+86400000).toISOString().slice(0,10);
     const ts=sessions.filter(s=>s.date===tmr&&!s.notified);
     if(ts.length){ const n=ts.map(s=>allC.find(c=>c.id===s.childId)?.name).filter(Boolean); showNotif(`Yarın ${ts.length} seans: ${n.join(", ")} — etkinlik hazırlamayı unutmayın!`); setSessions(p=>p.map(s=>ts.find(x=>x.id===s.id)?{...s,notified:true}:s)); }
   },[]);
+
+  useEffect(()=>{
+    const interval = setInterval(() => refreshData(true), 30000);
+    return () => clearInterval(interval);
+  },[refreshData]);
 
   const pendingTasks=assignments.filter(a=>a.status==="onay bekliyor").length;
   const pendingSubmissions=submissions.filter(s=>!s.reviewed).length;
@@ -2121,6 +2170,8 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
             <div className="topbar-title">{TITLES[page]||page}</div>
           </div>
           <div className="topbar-right">
+            {refreshError&&<div title={refreshError} style={{fontSize:10,color:"#E9784B",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>⚠ {refreshError}</div>}
+            <button className="btn btn-ghost btn-xs" title="Verileri yenile" onClick={()=>refreshData(false)} disabled={isRefreshing} style={{minWidth:28}}>{isRefreshing?<span style={{fontSize:10}}>...</span>:IC.refresh}</button>
             <div className="online-pill"><span className="online-dot"/>Aktif</div>
             <button className="btn btn-gold btn-sm" onClick={()=>{setMTarget(null);setModal(true);}}>{IC.plus} <span className="hide-xs">Ödev Oluştur</span></button>
           </div>
@@ -2133,7 +2184,7 @@ function ExpertApp({ user, students, assignments, setAssignments, pool, setPool,
             {page==="stu-d"    &&<StuDetail child={sel} asgns={getA(sel?.id)} submissions={submissions} onBack={()=>setPage("students")} onAssign={()=>{setMTarget(sel);setModal(true);}} onApprove={handleApprove}/>}
             {page==="tasks"    &&<AllTasks assignments={assignments} setAssignments={setAssignments} allC={allC} onPreview={setPrevAsgn} pool={pool} onApprove={handleApprove}/>}
             {page==="inbox"    &&<SubmissionInbox submissions={submissions} setSubmissions={setSubmissions} assignments={assignments} allC={allC}/>}
-            {page==="online"   &&<OnlineRequestsExpert requests={onlineRequests} setRequests={setOnlineRequests} allC={allC} sessions={sessions} setSessions={setSessions} showNotif={showNotif}/>}
+            {page==="online"   &&<OnlineRequestsExpert requests={onlineRequests} setRequests={setOnlineRequests} allC={allC} sessions={sessions} setSessions={setSessions} showNotif={showNotif} onRefresh={()=>refreshData(false)}/>}
             {page==="pool"     &&<MaterialPool pool={pool} setPool={setPool}/>}
             {page==="avail"    &&<AvailabilityManager availability={availability} setAvailability={setAvailability}/>}
             {page==="ai"       &&<AITools assignments={assignments} setAssignments={setAssignments} allC={allC} pool={pool}/>}
@@ -2462,26 +2513,38 @@ function AssignPreviewModal({ asgn, pool, onClose, onApprove }) {
 // ─── SUBMISSION INBOX ──────────────────────────────────────────────────────────
 function SubmissionInbox({ submissions, setSubmissions, assignments, allC }) {
   const [sel,setSel]=useState(null);
+  const [actionError,setActionError]=useState(null);
   const { updateSubmission, deleteSubmission } = useSupabase();
-  const mark=(id,reviewed)=>{ updateSubmission(id, {reviewed}); setSubmissions(p=>p.map(s=>s.id===id?{...s,reviewed}:s)); };
-  const del=id=>{ deleteSubmission(id); setSubmissions(p=>p.filter(s=>s.id!==id)); };
+  const mark=async(id,reviewed)=>{
+    try {
+      await updateSubmission(id, {reviewed});
+      setSubmissions(p=>p.map(s=>s.id===id?{...s,reviewed}:s));
+    } catch(e) { setActionError(`Güncelleme başarısız: ${e.message}`); }
+  };
+  const del=async id=>{
+    try {
+      await deleteSubmission(id);
+      setSubmissions(p=>p.filter(s=>s.id!==id));
+    } catch(e) { setActionError(`Silme başarısız: ${e.message}`); }
+  };
   const unreviewed=submissions.filter(s=>!s.reviewed);
   const reviewed=submissions.filter(s=>s.reviewed);
   return (
     <>
+      {actionError&&<div style={{background:"rgba(220,53,69,.12)",border:"1px solid rgba(220,53,69,.3)",borderRadius:9,padding:"10px 14px",marginBottom:12,color:"#E9784B",fontSize:12}}>⚠ {actionError} <button className="btn btn-ghost btn-xs" style={{marginLeft:8}} onClick={()=>setActionError(null)}>✕</button></div>}
       {unreviewed.length>0&&<>
         <div className="sectitle" style={{color:B.gold}}>Yeni Teslimler ({unreviewed.length})</div>
         {unreviewed.map(s=>{ const c=allC.find(x=>x.id===s.childId); const a=assignments.find(x=>x.id===s.asgnId); return (
           <div key={s.id} className="sub-card" style={{borderColor:"rgba(201,168,76,.2)"}}>
             <div className="flex ic jb mb2">
-              <div><div className="tsm bold" style={{color:B.gold}}>{c?.name}</div><div className="txs muted">{a?.title||"Ödev"} · {s.date}</div></div>
+              <div><div className="tsm bold" style={{color:B.gold}}>{c?.name||"Öğrenci"}</div><div className="txs muted">{a?.title||"Ödev"} · {s.date}</div></div>
               <div className="flex g2">
                 <button className="btn btn-success btn-xs" onClick={()=>mark(s.id,true)}>İncelendi</button>
                 <button className="btn btn-ghost btn-xs" onClick={()=>setSel(s)}>{IC.eye}</button>
                 <button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>del(s.id)}>{IC.trash}</button>
               </div>
             </div>
-            {s.photo&&<img src={s.photo} alt="teslim" className="sub-img"/>}
+            {s.photo&&<img src={s.photo} alt="teslim" className="sub-img" onError={e=>e.target.style.display='none'}/>}
             {s.audio&&<div className="audio-player"><div className="txs muted mb2">🎙️ Ses Kaydı</div><audio controls src={s.audio}/></div>}
             {s.note&&<div className="txs muted mt2">"{s.note}"</div>}
           </div>
@@ -2491,16 +2554,16 @@ function SubmissionInbox({ submissions, setSubmissions, assignments, allC }) {
         <div className="sectitle mt4">İncelendi ({reviewed.length})</div>
         {reviewed.map(s=>{ const c=allC.find(x=>x.id===s.childId); return (
           <div key={s.id} className="sub-card" style={{opacity:.65}}>
-            <div className="flex ic jb"><div><div className="tsm bold">{c?.name}</div><div className="txs muted">{s.date}</div></div>
+            <div className="flex ic jb"><div><div className="tsm bold">{c?.name||"Öğrenci"}</div><div className="txs muted">{s.date}</div></div>
             <div className="flex g2"><button className="btn btn-ghost btn-xs" onClick={()=>setSel(s)}>{IC.eye}</button><button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>del(s.id)}>{IC.trash}</button></div></div>
           </div>
         ); })}
       </>}
-      {submissions.length===0&&<div className="card" style={{textAlign:"center",padding:48,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📥</div><div className="bold tsm">Henüz teslim yok</div></div>}
+      {submissions.length===0&&<div className="card" style={{textAlign:"center",padding:48,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>📥</div><div className="bold tsm">Henüz teslim yok</div><div className="txs mt2">Veriler her 30 saniyede otomatik güncellenir</div></div>}
       {sel&&<div className="mov" onClick={e=>e.target===e.currentTarget&&setSel(null)}>
         <div className="mbox mbox-lg">
           <div className="mhdr"><div className="mtitle">Teslim Detayı</div><button className="mx" onClick={()=>setSel(null)}>✕</button></div>
-          {sel.photo&&<img src={sel.photo} alt="teslim" style={{width:"100%",maxHeight:420,objectFit:"cover",borderRadius:9,marginBottom:16,border:`1px solid ${B.border}`}}/>}
+          {sel.photo&&<img src={sel.photo} alt="teslim" style={{width:"100%",maxHeight:420,objectFit:"cover",borderRadius:9,marginBottom:16,border:`1px solid ${B.border}`}} onError={e=>{e.target.style.display='none';}}/>}
           {sel.audio&&<div className="audio-player mb4"><div className="tsm bold mb2">🎙️ Ses Kaydı</div><audio controls src={sel.audio} style={{width:"100%"}}/></div>}
           {sel.note&&<div style={{fontSize:13,color:B.text2,fontStyle:"italic",marginBottom:16}}>"{sel.note}"</div>}
           <div className="flex g2">
@@ -2615,33 +2678,43 @@ function AvailabilityManager({ availability, setAvailability }) {
 }
 
 // ─── ONLINE REQUESTS (EXPERT) ──────────────────────────────────────────────────
-function OnlineRequestsExpert({ requests, setRequests, allC, sessions, setSessions, showNotif }) {
+function OnlineRequestsExpert({ requests, setRequests, allC, sessions, setSessions, showNotif, onRefresh }) {
   const pending=requests.filter(r=>r.status==="bekliyor");
   const approved=requests.filter(r=>r.status==="onaylandı");
+  const rejected=requests.filter(r=>r.status==="reddedildi");
+  const [actionError,setActionError]=useState(null);
   const { updateRequest, saveSession } = useSupabase();
   const respond=async(id,status,note)=>{
-    updateRequest(id, { status, expert_note: note || null });
-    setRequests(p=>p.map(r=>r.id===id?{...r,status,expertNote:note}:r));
-    if(status==="onaylandı"){
-      const r=requests.find(x=>x.id===id);
-      const dbSession = {
-        student_id: r.childId,
-        date:       r.requestedDate,
-        time:       r.requestedTime,
-        duration:   50,
-        notes:      "Online Değerlendirme Seansı",
-        type:       "online",
-        notified:   false,
-      };
-      const saved = await saveSession(dbSession);
-      const sid = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("s"+Date.now());
-      setSessions(p=>[...p,{...dbSession, id:sid, childId:r.childId, note:dbSession.notes, online:true}]);
-      showNotif("Seans onaylandı ve takvime eklendi!");
+    setActionError(null);
+    try {
+      await updateRequest(id, { status, expert_note: note || null });
+      setRequests(p=>p.map(r=>r.id===id?{...r,status,expertNote:note}:r));
+      if(status==="onaylandı"){
+        const r=requests.find(x=>x.id===id);
+        const dbSession = {
+          student_id: r.childId,
+          date:       r.requestedDate,
+          time:       r.requestedTime,
+          duration:   50,
+          notes:      "Online Değerlendirme Seansı",
+          type:       "online",
+          notified:   false,
+        };
+        const saved = await saveSession(dbSession);
+        const sid = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("s"+Date.now());
+        setSessions(p=>[...p,{...dbSession, id:sid, childId:r.childId, note:dbSession.notes, online:true}]);
+        showNotif("Seans onaylandı ve takvime eklendi!");
+      } else {
+        showNotif(status==="reddedildi" ? "Talep reddedildi." : "Talep güncellendi.");
+      }
+    } catch(e) {
+      setActionError(`İşlem başarısız: ${e.message}`);
     }
   };
 
   return (
     <>
+      {actionError&&<div style={{background:"rgba(220,53,69,.12)",border:"1px solid rgba(220,53,69,.3)",borderRadius:9,padding:"10px 14px",marginBottom:12,color:"#E9784B",fontSize:12}}>⚠ {actionError}</div>}
       {pending.length>0&&<>
         <div className="sectitle" style={{color:B.gold}}>Yanıt Bekleyenler ({pending.length})</div>
         {pending.map(r=>{ const c=allC.find(x=>x.id===r.childId); const par={name:"Veli"};
@@ -2649,12 +2722,18 @@ function OnlineRequestsExpert({ requests, setRequests, allC, sessions, setSessio
         })}
       </>}
       {approved.length>0&&<>
-        <div className="sectitle mt4">Onaylananlar</div>
+        <div className="sectitle mt4">Onaylananlar ({approved.length})</div>
         {approved.map(r=>{ const c=allC.find(x=>x.id===r.childId);
-          return <div key={r.id} className="ar"><div className="ar-ico" style={{fontSize:20}}>🎥</div><div style={{flex:1}}><div className="ar-title">{c?.name}</div><div className="ar-meta">{r.requestedDate} {r.requestedTime}</div></div><SBadge s="onaylandı"/></div>;
+          return <div key={r.id} className="ar"><div className="ar-ico" style={{fontSize:20}}>🎥</div><div style={{flex:1}}><div className="ar-title">{c?.name||"Öğrenci"}</div><div className="ar-meta">{r.requestedDate} {r.requestedTime}</div></div><SBadge s="onaylandı"/></div>;
         })}
       </>}
-      {requests.length===0&&<div className="card" style={{textAlign:"center",padding:48,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>🎥</div><div className="bold tsm">Henüz online seans talebi yok</div></div>}
+      {rejected.length>0&&<>
+        <div className="sectitle mt4" style={{opacity:.6}}>Reddedilenler ({rejected.length})</div>
+        {rejected.map(r=>{ const c=allC.find(x=>x.id===r.childId);
+          return <div key={r.id} className="ar" style={{opacity:.5}}><div className="ar-ico" style={{fontSize:20}}>🎥</div><div style={{flex:1}}><div className="ar-title">{c?.name||"Öğrenci"}</div><div className="ar-meta">{r.requestedDate} {r.requestedTime}</div></div><SBadge s="reddedildi"/></div>;
+        })}
+      </>}
+      {requests.length===0&&<div className="card" style={{textAlign:"center",padding:48,color:B.text3}}><div style={{fontSize:40,marginBottom:12}}>🎥</div><div className="bold tsm">Henüz online seans talebi yok</div><div className="txs mt2">Veriler her 30 saniyede otomatik güncellenir</div></div>}
     </>
   );
 }
@@ -4233,7 +4312,7 @@ export default function App() {
           setAvailability(avail);
           setOnlineRequests(reqs.filter(r => r.student_id === fullUser.child?.id).map(transformRequest));
           setSubmissions(subs.filter(s => s.student_id === fullUser.child?.id));
-        } catch(e) {}
+        } catch(e) { console.error("Veli verileri yüklenemedi:", e); }
       }
 
       // Materyalleri her iki rol için yükle
@@ -4252,7 +4331,7 @@ export default function App() {
             const asgns = await loadAssignments(ids);
             setAssignments(asgns.map(transformAssignment));
           }
-        } catch(e) {}
+        } catch(e) { console.error("Öğrenciler yüklenemedi:", e); }
         try {
           const [reqs, avail, sess, subs] = await Promise.all([
             loadRequests(), loadAvailability(), loadSessions(), loadSubmissions(),
@@ -4261,7 +4340,7 @@ export default function App() {
           setAvailability(avail);
           setSessions(sess.map(transformSession));
           setSubmissions(subs);
-        } catch(e) {}
+        } catch(e) { console.error("Uzman verileri yüklenemedi:", e); }
       }
 
       setUser(fullUser);
