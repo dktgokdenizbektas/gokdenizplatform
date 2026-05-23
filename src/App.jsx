@@ -1253,6 +1253,16 @@ const DAYS      = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartes
 const DAY_TO_INT = {"Pazar":0,"Pazartesi":1,"Salı":2,"Çarşamba":3,"Perşembe":4,"Cuma":5,"Cumartesi":6};
 const INT_TO_DAY = {0:"Pazar",1:"Pazartesi",2:"Salı",3:"Çarşamba",4:"Perşembe",5:"Cuma",6:"Cumartesi"};
 
+// Returns the next occurrence of a Turkish day name as YYYY-MM-DD (never today)
+function nextDateForDay(dayName) {
+  const target = DAY_TO_INT[dayName];
+  if(target == null) return "";
+  const d = new Date();
+  d.setDate(d.getDate() + 1); // start from tomorrow
+  while(d.getDay() !== target) d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 async function callClaude(prompt, system="SADECE JSON yanıt ver.", maxTokens=900) {
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system,messages:[{role:"user",content:prompt}]})});
@@ -3054,7 +3064,7 @@ function OnlineBooking({ child, availability, requests, setRequests }) {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const slotDate = selSlot.date || selSlot.day || "";
+      const slotDate = selSlot.date || ""; // always YYYY-MM-DD after nextDateForDay fix
       const dbPayload = {
         student_id:  child.id,
         parent_id:   child.parent_id,
@@ -3109,7 +3119,7 @@ function OnlineBooking({ child, availability, requests, setRequests }) {
           <div className="avail-day-title">{av.type==="weekly"?`Her ${av.day}`:av.date}</div>
           <div className="slot-grid">
             {av.slots.map(s=>(
-              <div key={s.time} className={`time-slot ${s.booked?"booked":selSlot?.time===s.time&&selSlot?.avId===av.id?"selected":"available"}`} onClick={()=>!s.booked&&setSelSlot({avId:av.id,time:s.time,day:av.day,date:av.date})}>
+              <div key={s.time} className={`time-slot ${s.booked?"booked":selSlot?.time===s.time&&selSlot?.avId===av.id?"selected":"available"}`} onClick={()=>!s.booked&&setSelSlot({avId:av.id,time:s.time,day:av.day,date:av.date||nextDateForDay(av.day)})}>
                 {s.time}{s.booked?" (Dolu)":""}
               </div>
             ))}
@@ -3119,7 +3129,7 @@ function OnlineBooking({ child, availability, requests, setRequests }) {
 
       {selSlot&&<>
         <div style={{background:B.surf3,borderRadius:10,padding:"14px 18px",marginBottom:16,border:`1px solid rgba(201,168,76,.2)`}}>
-          <div className="tsm bold tg">Seçilen: {selSlot.day||selSlot.date} — {selSlot.time}</div>
+          <div className="tsm bold tg">Seçilen: {selSlot.day ? `${selSlot.day} (${selSlot.date})` : selSlot.date} — {selSlot.time}</div>
         </div>
         <div className="f-group"><label className="f-label">Başvuru Nedeni *</label><select className="f-select" value={reason} onChange={e=>setReason(e.target.value)}><option value="">Seçin...</option>{DIAGNOSES.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
         <div className="f-group"><label className="f-label">Ek Not</label><textarea className="f-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="Eklemek istediğiniz bilgiler..."/></div>
