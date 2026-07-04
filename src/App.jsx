@@ -414,19 +414,6 @@ function useSupabase() {
     return sb.storage.upload("avatars", path, compressed, "image/jpeg");
   };
 
-  // Teslim fotoğrafı yükle — base64 olarak kaydet (storage bucket public değil)
-  const uploadSubmissionPhoto = async (file, assignmentId) => {
-    try {
-      const compressed = await compressImage(file, 500, 0.72, 80);
-      return new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onload = e => resolve(e.target.result);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(compressed);
-      });
-    } catch(e) { return null; }
-  };
-
   const deleteAssignment = async (id) => {
     return sb.from("assignments").delete(`id=eq.${id}`);
   };
@@ -442,7 +429,7 @@ function useSupabase() {
     loadRequests, saveRequest, updateRequest,
     loadAvailability, saveAvailability, deleteAvailability,
     loadSessions, saveSession, updateSession, deleteSession,
-    uploadAvatar, uploadSubmissionPhoto,
+    uploadAvatar,
   };
 }
 
@@ -1639,10 +1626,13 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 
 /* ── LETTER GRID ─────────────────────────────────────────── */
 .lg{display:grid;grid-template-columns:repeat(auto-fill,minmax(62px,1fr));gap:10px}
-.lt{aspect-ratio:1;border-radius:12px;border:1px solid var(--bdr2);background:var(--surf2);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all .18s;font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--txt)}
+.lt{aspect-ratio:1;border-radius:12px;border:1px solid var(--bdr2);background:var(--surf2);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:all .18s;font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--txt);position:relative}
 .lt:hover{border-color:var(--gold);color:var(--gold);background:var(--gbg);transform:scale(1.04)}
 .lt.sel{border-color:var(--gold);background:var(--gold);color:#0B1929;box-shadow:var(--gold-sh)}
 .lt-sub{font-family:'Inter',sans-serif;font-size:11px;opacity:.65;margin-top:1px}
+.lt-locked{cursor:not-allowed;opacity:.4;position:relative}
+.lt-locked:hover{border-color:var(--bdr2);color:var(--txt);background:var(--surf2);transform:none}
+.lt-soon{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;background:rgba(11,25,41,.75);border-radius:12px;font-family:'Inter',sans-serif;font-size:8px;font-weight:700;color:var(--gold);letter-spacing:.2px;padding:2px;line-height:1.3}
 
 /* ── FREE PLAY HERO ──────────────────────────────────────── */
 .fph{background:linear-gradient(135deg,var(--surf2),var(--surf3));border:1px solid rgba(201,168,76,.2);border-radius:var(--r);padding:28px;position:relative;overflow:hidden;margin-bottom:24px}
@@ -1658,6 +1648,9 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .oyun-acik{font-size:11px;color:var(--text3);line-height:1.4}
 .oyun-ok{font-size:18px;color:var(--gold);flex-shrink:0;opacity:.6;transition:opacity .15s}
 .oyun-kart:hover .oyun-ok{opacity:1}
+.oyun-kart-locked{cursor:not-allowed;opacity:.55;position:relative}
+.oyun-kart-locked:hover{border-color:var(--border);background:var(--surf2);transform:none}
+.oyun-soon{position:absolute;top:10px;right:10px;background:rgba(201,168,76,.15);color:var(--gold);font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap}
 
 /* ── MEMORY GAME ─────────────────────────────────────────── */
 .mg{display:grid;gap:10px;margin-bottom:18px}
@@ -1831,6 +1824,12 @@ function SBadge({ s }) {
 }
 function gameIcon(g){ return g==="balloon"?"🎈":g==="memory"?"🎴":"📄"; }
 function gameLabel(g){ return g==="balloon"?"Balon Patlatma":g==="memory"?"Kart Eşleme":g==="pdf"?"PDF Ödevi":"Oyun"; }
+function isDriveLink(url){ return typeof url==="string" && /drive\.google\.com/i.test(url); }
+function SubmissionPhoto({ url, style, className }){
+  if(!url) return null;
+  if(isDriveLink(url)) return <div style={{marginBottom:12}}><a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">📁 Drive'da Görüntüle ↗</a></div>;
+  return <img src={url} alt="teslim" className={className} style={style} onError={e=>e.target.style.display='none'}/>;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOGIN + REGISTER + ONBOARDING
@@ -1843,10 +1842,60 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
   const [err,setErr]=useState("");
   const [loading2,setLoading2]=useState(false);
   const [newUser,setNewUser]=useState(null);
+  const [googleAuth,setGoogleAuth]=useState(null); // {user, access_token} — set when a Google redirect has no profile yet
   // reg form
   const [rName,setRName]=useState(""); const [rEmail,setREmail]=useState("");
   const [rPass,setRPass]=useState(""); const [rPass2,setRPass2]=useState("");
   const [rPhone,setRPhone]=useState("");
+
+  // Google OAuth redirect dönüşü — Supabase implicit flow token'ları URL hash'inde döner
+  useEffect(() => {
+    const hash = window.location.hash;
+    if(!hash || !hash.includes("access_token")) return;
+    const params = new URLSearchParams(hash.slice(1));
+    const access_token = params.get("access_token");
+    const refresh_token = params.get("refresh_token");
+    if(!access_token) return;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    (async () => {
+      setErr(""); setLoading2(true);
+      try {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${access_token}` },
+        });
+        const user = await r.json();
+        if(!user?.id) { setErr("Google girişi başarısız."); return; }
+        const session = {
+          access_token, refresh_token, user,
+          expires_at: Math.floor(Date.now()/1000) + (parseInt(params.get("expires_in"),10) || 3600),
+        };
+        sb.auth.setSession(session);
+        localStorage.setItem('sb_session', JSON.stringify(session));
+        let profile;
+        try {
+          const data = await sb.from("profiles").select("*", `id=eq.${user.id}`);
+          profile = Array.isArray(data) ? data[0] : null;
+        } catch(e) {
+          setErr("Bağlantı hatası. Lütfen tekrar deneyin.");
+          return;
+        }
+        if(profile) {
+          await onLogin(user, access_token);
+        } else {
+          setGoogleAuth({ user, access_token });
+          setNewUser({
+            name:  user.user_metadata?.full_name || user.email?.split("@")[0] || "Veli",
+            email: user.email, phone:"", role:"parent", via:"google", authId: user.id,
+          });
+          setMode("onboard");
+        }
+      } catch(e) {
+        setErr("Bağlantı hatası. Lütfen tekrar deneyin.");
+      } finally {
+        setLoading2(false);
+      }
+    })();
+  }, []);
 
   const login = async () => {
     setErr(""); setLoading2(true);
@@ -1873,8 +1922,9 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
   };
 
   const googleLogin = () => {
-    // Gerçek Google OAuth — Supabase redirect
-    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${window.location.origin}`;
+    // Gerçek Google OAuth — Supabase redirect (redirect_to düzgün encode edilmeli)
+    const redirectTo = encodeURIComponent(window.location.origin + window.location.pathname);
+    window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`;
   };
 
   const register = async () => {
@@ -1897,11 +1947,19 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
     if(!newUser) return;
     setLoading2(true);
     try {
-      const d = await sb.auth.signIn(newUser.email, rPass);
-      if(!d.access_token) { setErr("Giriş yapılamadı."); return; }
+      let authUser, token;
+      if(newUser.via === "google" && googleAuth) {
+        authUser = googleAuth.user;
+        token    = googleAuth.access_token;
+      } else {
+        const d = await sb.auth.signIn(newUser.email, rPass);
+        if(!d.access_token) { setErr("Giriş yapılamadı."); return; }
+        authUser = d.user;
+        token    = d.access_token;
+      }
 
       await sb.from("profiles").upsert({
-        id:    d.user.id,
+        id:    authUser.id,
         role:  "parent",
         name:  newUser.name,
         email: newUser.email,
@@ -1909,7 +1967,7 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
       });
 
       await sb.from("students").insert({
-        parent_id: d.user.id,
+        parent_id: authUser.id,
         name:      child.name,
         age:       parseInt(child.age)||0,
         class:     child.class||"",
@@ -1917,7 +1975,7 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
         notes:     child.notes||"",
       });
 
-      await onLogin(d.user, d.access_token);
+      await onLogin(authUser, token);
     } catch(e) {
       setErr("Hata oluştu.");
     } finally { setLoading2(false); }
@@ -2413,7 +2471,7 @@ function StuDetail({ child, asgns, submissions, onBack, onAssign, onApprove }) {
       {mySubs.length>0&&<><div className="sectitle mt4">Teslim Edilen Ödevler ({mySubs.length})</div>{mySubs.map(s=>(
         <div key={s.id} className="sub-card">
           <div className="flex ic jb mb2"><span className="tsm bold">{s.asgnTitle||"Ödev"}</span><span className="txs muted">{s.date}</span></div>
-          {s.photo&&<img src={s.photo} alt="teslim" className="sub-img" style={{height:100}} onError={e=>e.target.style.display='none'}/>}
+          <SubmissionPhoto url={s.photo} className="sub-img" style={{height:100}}/>
           {s.note&&<div className="txs muted mt2">{s.note}</div>}
         </div>
       ))}</>}
@@ -2573,7 +2631,7 @@ function SubmissionInbox({ submissions, setSubmissions, assignments, allC }) {
                 <button className="btn btn-xs" style={{background:B.dangerBg,color:B.danger}} onClick={()=>del(s.id)}>{IC.trash}</button>
               </div>
             </div>
-            {s.photo&&<img src={s.photo} alt="teslim" className="sub-img" onError={e=>e.target.style.display='none'}/>}
+            <SubmissionPhoto url={s.photo} className="sub-img"/>
             {s.audio&&<div className="audio-player"><div className="txs muted mb2">🎙️ Ses Kaydı</div><audio controls src={s.audio}/></div>}
             {s.note&&<div className="txs muted mt2">"{s.note}"</div>}
           </div>
@@ -2592,7 +2650,7 @@ function SubmissionInbox({ submissions, setSubmissions, assignments, allC }) {
       {sel&&<div className="mov" onClick={e=>e.target===e.currentTarget&&setSel(null)}>
         <div className="mbox mbox-lg">
           <div className="mhdr"><div className="mtitle">Teslim Detayı</div><button className="mx" onClick={()=>setSel(null)}>✕</button></div>
-          {sel.photo&&<img src={sel.photo} alt="teslim" style={{width:"100%",maxHeight:420,objectFit:"cover",borderRadius:9,marginBottom:16,border:`1px solid ${B.border}`}} onError={e=>{e.target.style.display='none';}}/>}
+          <SubmissionPhoto url={sel.photo} style={{width:"100%",maxHeight:420,objectFit:"cover",borderRadius:9,marginBottom:16,border:`1px solid ${B.border}`}}/>
           {sel.audio&&<div className="audio-player mb4"><div className="tsm bold mb2">🎙️ Ses Kaydı</div><audio controls src={sel.audio} style={{width:"100%"}}/></div>}
           {sel.note&&<div style={{fontSize:13,color:B.text2,fontStyle:"italic",marginBottom:16}}>"{sel.note}"</div>}
           <div className="flex g2">
@@ -2967,42 +3025,36 @@ function PTasks({ myA, startGame, pool, submissions, setSubmissions, child, assi
 }
 
 function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
-  const [photo,setPhoto]=useState(null);
+  const [driveLink,setDriveLink]=useState("");
   const [audio,setAudio]=useState(null);
   const [note,setNote]=useState("");
   const [recording,setRecording]=useState(false);
   const [recorder,setRecorder]=useState(null);
   const [submitting,setSubmitting]=useState(false);
   const [submitError,setSubmitError]=useState(null);
-  const photoRef=useRef();
-  const { saveSubmission, uploadSubmissionPhoto, uploadSubmissionAudio } = useSupabase();
-
-  const handlePhoto=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>setPhoto(ev.target.result); r.readAsDataURL(f); };
+  const { saveSubmission, uploadSubmissionAudio } = useSupabase();
 
   const startRec=async()=>{
     try { const stream=await navigator.mediaDevices.getUserMedia({audio:true}); const mr=new MediaRecorder(stream); const chunks=[]; mr.ondataavailable=e=>chunks.push(e.data); mr.onstop=()=>{ const blob=new Blob(chunks,{type:"audio/webm"}); const r=new FileReader(); r.onload=ev=>setAudio(ev.target.result); r.readAsDataURL(blob); stream.getTracks().forEach(t=>t.stop()); }; mr.start(); setRecorder(mr); setRecording(true); } catch { alert("Mikrofon erişimi reddedildi."); }
   };
   const stopRec=()=>{ recorder?.stop(); setRecording(false); };
 
+  const link = driveLink.trim();
+  const linkValid = !link || /^https?:\/\//i.test(link);
+
   const submit=async()=>{
-    if(!photo&&!audio) return;
+    if((!link||!linkValid)&&!audio) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      let photoUrl = null;
       let audioUrl = null;
-      if(photo) {
-        const resp = await fetch(photo);
-        const blob = await resp.blob();
-        photoUrl = await uploadSubmissionPhoto(blob, asgn.id) || photo;
-      }
       if(audio) {
         audioUrl = await uploadSubmissionAudio(audio, asgn.id) || audio;
       }
       const dbPayload = {
         student_id:    child.id,
         assignment_id: asgn.id,
-        photo_url:     photoUrl,
+        photo_url:     link || null,
         audio_url:     audioUrl,
         note:          note || null,
         reviewed:      false,
@@ -3010,7 +3062,7 @@ function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
       const saved = await saveSubmission(dbPayload);
       const id = (Array.isArray(saved) && saved[0]?.id) ? saved[0].id : ("sub"+Date.now());
       const date = new Date().toISOString().slice(0,10);
-      onSubmit({ id, childId:child.id, asgnId:asgn.id, asgnTitle:asgn.title, photo:photoUrl||photo, audio:audioUrl||audio, note, date, reviewed:false });
+      onSubmit({ id, childId:child.id, asgnId:asgn.id, asgnTitle:asgn.title, photo:link||null, audio:audioUrl||audio, note, date, reviewed:false });
     } catch(e) {
       setSubmitError(`Teslim başarısız: ${e.message}`);
     } finally {
@@ -3023,13 +3075,13 @@ function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
       <div className="mbox">
         <div className="mhdr"><div className="mtitle">Ödevi Teslim Et</div><button className="mx" onClick={onClose}>✕</button></div>
         <div style={{background:B.surf3,borderRadius:9,padding:"10px 14px",marginBottom:20}}><div className="txs muted">Ödev: <strong style={{color:B.text}}>{asgn.title}</strong></div></div>
-        
+
         <div className="f-group">
-          <label className="f-label">Fotoğraf *</label>
-          <input ref={photoRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handlePhoto}/>
-          {photo?<div style={{position:"relative"}}><img src={photo} alt="teslim" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:9,border:`1px solid ${B.border}`}}/><button className="btn btn-ghost btn-xs" style={{position:"absolute",top:8,right:8}} onClick={()=>setPhoto(null)}>✕</button></div>:
-            <div className="upload-zone" style={{padding:24}} onClick={()=>photoRef.current.click()}><div style={{fontSize:28,marginBottom:8}}>📸</div><div className="txs muted">Kamera ile çek veya galeriden seç</div></div>
-          }
+          <label className="f-label">Google Drive Fotoğraf Linki *</label>
+          <input className="f-input" type="url" value={driveLink} onChange={e=>setDriveLink(e.target.value)} placeholder="https://drive.google.com/file/d/..."/>
+          <div className="txs muted mt2">Fotoğrafı Google Drive'a yükleyip "Bağlantıya sahip olan herkes görüntüleyebilir" paylaşım linkini buraya yapıştırın.</div>
+          {link&&!linkValid&&<div className="txs" style={{color:"#E9784B",marginTop:4}}>Geçerli bir link girin (http:// veya https:// ile başlamalı).</div>}
+          {link&&linkValid&&<a href={link} target="_blank" rel="noopener noreferrer" className="txs" style={{color:B.gold,marginTop:4,display:"inline-block"}}>Linki önizle ↗</a>}
         </div>
 
         <div className="f-group">
@@ -3045,7 +3097,7 @@ function SubmissionModal({ asgn, child, onClose, onSubmit, setSubmissions }) {
         <div className="f-group"><label className="f-label">Not (opsiyonel)</label><textarea className="f-textarea" style={{minHeight:60}} value={note} onChange={e=>setNote(e.target.value)} placeholder="Zorluk yaşadığı yerler, gözlemleriniz..."/></div>
         {submitError&&<div style={{background:"rgba(220,53,69,.12)",border:"1px solid rgba(220,53,69,.3)",borderRadius:9,padding:"10px 14px",marginBottom:12,color:"#E9784B",fontSize:12}}>⚠ {submitError}</div>}
         <div className="f-divider"/>
-        <div className="flex g2"><button className="btn btn-ghost fw" onClick={onClose} disabled={submitting}>İptal</button><button className="btn btn-gold fw" onClick={submit} disabled={(!photo&&!audio)||submitting}>{submitting?"Kaydediliyor...":"Teslim Et"}</button></div>
+        <div className="flex g2"><button className="btn btn-ghost fw" onClick={onClose} disabled={submitting}>İptal</button><button className="btn btn-gold fw" onClick={submit} disabled={((!link||!linkValid)&&!audio)||submitting}>{submitting?"Kaydediliyor...":"Teslim Et"}</button></div>
       </div>
     </div>
   );
@@ -3362,6 +3414,9 @@ const OYUN_KATALOGU = [
   { id:"fark",     emoji:"🔍", baslik:"Ne Değişti?",       acik:"İki satır arasındaki farklı emojiyi bul",    etiket:"Dikkat",   harfGerek:false },
 ];
 
+// Henüz yayında olmayan oyunlar — "Çok Yakında" rozeti gösterilir
+const OYUN_YAKINDA = new Set(["ayna","hikaye"]);
+
 const ETIK_RENKLER = {
   "Fonetik":"rgba(201,168,76,.15)", "Bellek":"rgba(74,158,223,.15)",
   "Hece":"rgba(61,170,114,.15)", "Kavram":"rgba(186,104,200,.15)",
@@ -3429,11 +3484,15 @@ function FreePlay({ child }) {
           <div className="tsm muted">Hangi harfi çalışmak istiyorsun?</div>
         </div>
         <div className="lg">
-          {UNSUZ.map(l=>(
-            <div key={l} className="lt" onClick={()=>setLetter(l)}>
-              {l}<div className="lt-sub">{EMOJI_DICT[l]?.[0]||""}</div>
-            </div>
-          ))}
+          {UNSUZ.map(l=>{
+            const locked = l!=="R";
+            return (
+              <div key={l} className={`lt${locked?" lt-locked":""}`} onClick={()=>{ if(!locked) setLetter(l); }}>
+                {l}<div className="lt-sub">{EMOJI_DICT[l]?.[0]||""}</div>
+                {locked&&<div className="lt-soon">🔒 Çok Yakında</div>}
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -3466,17 +3525,20 @@ function FreePlay({ child }) {
       {/* Harf gerektirmeyenler */}
       <div className="sectitle">Kelime & Anlama Oyunları</div>
       <div className="oyun-grid">
-        {harfsizOyunlar.map(o=>(
-          <div key={o.id} className="oyun-kart card-hover" onClick={()=>{setLetter(null);setOyun(o.id);}}>
-            <div className="oyun-emoji">{o.emoji}</div>
-            <div className="oyun-meta">
-              <div className="oyun-etik" style={{background:ETIK_RENKLER[o.etiket]||B.goldBg,color:B.gold}}>{o.etiket}</div>
-              <div className="oyun-baslik">{o.baslik}</div>
-              <div className="oyun-acik">{o.acik}</div>
+        {harfsizOyunlar.map(o=>{
+          const locked = OYUN_YAKINDA.has(o.id);
+          return (
+            <div key={o.id} className={`oyun-kart${locked?" oyun-kart-locked":" card-hover"}`} onClick={()=>{ if(locked) return; setLetter(null);setOyun(o.id); }}>
+              <div className="oyun-emoji">{o.emoji}</div>
+              <div className="oyun-meta">
+                <div className="oyun-etik" style={{background:ETIK_RENKLER[o.etiket]||B.goldBg,color:B.gold}}>{o.etiket}</div>
+                <div className="oyun-baslik">{o.baslik}</div>
+                <div className="oyun-acik">{o.acik}</div>
+              </div>
+              {locked?<div className="oyun-soon">Çok Yakında</div>:<div className="oyun-ok">→</div>}
             </div>
-            <div className="oyun-ok">→</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
