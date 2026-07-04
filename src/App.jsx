@@ -207,8 +207,12 @@ function useSupabase() {
 
   // Profil yükle
   const loadProfile = async (uid) => {
-    const data = await sb.from("profiles").select("*", `id=eq.${uid}`);
-    return Array.isArray(data) ? data[0] : null;
+    try {
+      const data = await sb.from("profiles").select("*", `id=eq.${uid}`);
+      return Array.isArray(data) ? data[0] : null;
+    } catch(e) {
+      throw new Error(`Profil yüklenemedi: ${e.message}`);
+    }
   };
 
   // Ödev kaydet
@@ -1846,15 +1850,23 @@ function LoginPage({ onLogin, regParents, setRegParents }) {
 
   const login = async () => {
     setErr(""); setLoading2(true);
+    let d;
     try {
-      const d = await sb.auth.signIn(email, pass);
-      if(d.error || d.error_description || !d.access_token) {
-        setErr(d.error_description || d.msg || "E-posta veya şifre hatalı.");
-        return;
-      }
-      await onLogin(d.user, d.access_token);
+      d = await sb.auth.signIn(email, pass);
     } catch(e) {
       setErr("Bağlantı hatası. Lütfen tekrar deneyin.");
+      setLoading2(false);
+      return;
+    }
+    if(d.error || d.error_description || !d.access_token) {
+      setErr(d.error_description || d.msg || "E-posta veya şifre hatalı.");
+      setLoading2(false);
+      return;
+    }
+    try {
+      await onLogin(d.user, d.access_token);
+    } catch(e) {
+      setErr("Giriş yapıldı ama veriler yüklenemedi. Lütfen tekrar deneyin.");
     } finally {
       setLoading2(false);
     }
@@ -4384,6 +4396,8 @@ export default function App() {
 
       setUser(fullUser);
     } catch(e) {
+      console.error("Giriş sırasında hata:", e);
+      throw e;
     } finally {
       setLoading(false);
     }
